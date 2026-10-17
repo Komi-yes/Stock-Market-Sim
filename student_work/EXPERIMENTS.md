@@ -372,4 +372,3 @@ Guards in SafePolicy:
     written to hold at any price, and they rely on the observation features `inventory`, `cash_ratio`, `nav_return` and `spread_bps`.
   - **Seed variance in DQN training is very large.** This is why the members were filtered on tuning seeds and then ensembled.
 
-## 7. Answers to the guide's analysis questions (optional, for coursework)
