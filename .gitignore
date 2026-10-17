@@ -223,3 +223,9 @@ MARL_Stock_Exchange_Workshop.docx
 
 README_FIRST.txt
 DELIVERABLE_SPECIFICATION.txt
+
+# Experiment artifacts (regenerable; the results are recorded in student_work/EXPERIMENTS.md).
+# The final model, its 7 ensemble members (needed by student_work/build_final.py) and the
+# submission ZIP are tracked explicitly with `git add -f`.
+outputs/*
+!outputs/README.txt
