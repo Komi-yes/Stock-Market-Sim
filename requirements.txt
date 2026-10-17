@@ -1,4 +1,6 @@
 numpy>=2.0,<3
 torch>=2.2
 matplotlib>=3.8
-abides-ng
+# abides-ng is not published on PyPI, so install it from GitHub (needs git + Python >= 3.12)
+abides-core @ git+https://github.com/GabrieleDiCorato/abides-ng.git#subdirectory=abides-core
+abides-ng @ git+https://github.com/GabrieleDiCorato/abides-ng.git#subdirectory=abides-markets
