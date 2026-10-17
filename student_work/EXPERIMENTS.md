@@ -16,18 +16,55 @@ Newest entries go at the bottom of each section. Never delete failed experiments
 | 2026-10-16 | ABIDES smoke test (`stable_day`, seed 42) runs | torch 2.14.1+cpu, numpy 2.5.4 |
 
 ## 2. Evaluation protocol
-Fill in once and keep fixed so results stay comparable.
-- Scenarios: stable, trending, volatile (practice market); ABIDES templates for spot checks
-- Tuning seeds: _TBD_
-- Held-out seeds: _TBD_ (not used until the final model check)
-- Episode length: _TBD_
-- Metrics per scenario and seed: final NAV / PnL, max drawdown, trade count, final inventory
+Fixed on 2026-10-16. Implemented in `student_work/evaluate.py`; extra scenarios are in `student_work/envs.py`.
+
+**Lecturer's ranking** (given to us): 50% mean return across scenarios and seeds (final value = cash + inventory
+at market value), 20% risk (max drawdown), 20% robustness and consistency across scenarios, 10% operational
+(invalid orders, excessive exposure, insolvency). Seeds and scenario parameters are hidden.
+
+- **Scenarios:** the official practice ones (stable, trending, volatile), run with the untouched `PracticeMarketEnv`,
+  plus stress ones in `ExtendedMarketEnv`:
+  - crash: negative drift and shocks
+  - downtrend
+  - low_liquidity: 40 bps spread, depth 150, 25% limit fills
+  - choppy
+
+  The stress scenarios add adverse selection on limit fills, market impact, and a non-zero `open_orders`.
+- **Episode lengths:** 300 and 1000 steps (the lecturer's length is unknown).
+- **Seed sets:**
+  - tuning: 10000–10009, used by workers.
+  - validation: 20000–20009, used only by the orchestrator between rounds.
+  - holdout: 30000–30019, used once for the final pick.
+
+  Training env seeds are `seed + episode` and stay below about 2000, so they never overlap these.
+- **Metrics per episode:** return %, max drawdown %, trades, final inventory, invalid-order attempts, share of steps
+  with |inventory| > 400, and insolvency.
+- **Composite SCORE**, rank-normalised within the comparison pool, which always includes HOLD and rule-momentum:
+  - 0.5 × R (mean return)
+  - 0.2 × D (mean max DD, lower is better)
+  - 0.2 × C (rank of the worst-scenario mean return and of the share of profitable episodes)
+  - 0.1 × O (invalid attempts per 100 steps + exposure share + 10 × insolvent share)
+
+  A model that does not beat HOLD on SCORE is rejected.
 
 ## 3. Baselines
-| Name | Description | Scenario | Seeds | PnL | Max DD | Trades | Final inv |
-|---|---|---|---|---|---|---|---|
-| rule-momentum | `examples/demo_02` 5-step momentum | | | | | | |
-| starter-dqn | Starter DQN, 5,000 steps, seed 7 | | | | | | |
+Results are on the **validation** set (140 episodes = 7 scenarios × 2 lengths × 10 seeds). JSON files are in `outputs/eval_baselines/`.
+
+| Name | Description | SCORE | R % | DD % | worst scen % | profitable | O | trades | crash % |
+|---|---|---|---|---|---|---|---|---|---|
+| rule-momentum | `examples/demo_02` 5-step momentum | 0.725 | 2.73 | 1.92 | -1.36 | 0.60 | 0.0 | 452 | 5.0 |
+| starter-dqn-s8 | Starter DQN, 5k steps, seed 8 | 0.725 | 3.61 | 3.90 | -1.21 | 0.61 | **54.3** | 229 | 13.6 |
+| HOLD | always action 0 | 0.500 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| starter-dqn-ens-safe300 | mean of s7+s8 + SafePolicy (cap 300) | 0.500 | 0.28 | 2.52 | -2.79 | 0.44 | 0.0 | 415 | 1.0 |
+| starter-dqn-s7 | Starter DQN, 5k steps, seed 7 | 0.050 | -0.08 | 4.27 | -7.44 | 0.37 | 24.8 | 313 | -7.4 |
+
+**Findings:**
+- **Training-seed variance is huge.** In crash, s7 makes −7.4% and s8 makes +13.6%. Every recipe must be trained with
+  at least 3 seeds and judged on the mean.
+- **The starter DQN keeps pushing against the position limit**, with up to 54 invalid attempts per 100 steps. That is the
+  10% operational part of the score.
+- **The momentum rule is a strong, low-drawdown bar to beat.** It profits from down moves too.
+- **s7 is long-biased.** It does well in trending and loses in crash and downtrend.
 
 ## 4. Experiments
 Copy this template for each experiment.
@@ -47,15 +84,292 @@ Copy this template for each experiment.
 - **Limitation or failure mode observed:**
 - **Files / output path:** `outputs/exp_<name>/`
 
+### Round 1 (2026-10-16). Common setup for all four experiments
+- **Training:** 3 training seeds per variant (1, 2, 3). 60k env steps for DQN and 150k for PPO, with `torch.set_num_threads(1)`.
+- **Evaluation:** tuning set (140 episodes per model). SCORE is rank-normalised inside the pooled table of the
+  baselines, the control and the worker's models, so compare SCOREs only within one table.
+  The means below are over the 3 seeds.
+- **Results:** JSON files are in `outputs/exp_<name>_eval/`. Code is in `student_work/experiments/<name>.py`.
+
+### EXP-000c: control, starter DQN at 60k steps (orchestrator)
+- **Change:** none. It is `student_work/train.py` with `--steps 60000`, seeds 1–3, so the round-1 variants have the same step budget.
+- **Results (mean):** R 0.83%, DD 4.1%, worst scenario −5.8%, O 43.
+  - Per scenario: trending +12.9%, crash −5.8%, downtrend −2.3%.
+  - 2 of 3 seeds do not beat HOLD.
+- **Conclusion:** more steps make the long bias stronger. The policy learns "buy", because the 3 training regimes never go down.
+- **Limitation:** it keeps hitting the ±500 position limit, at about 40 rejected attempts per 100 steps.
+
+### EXP-001: reward_risk (W1, Sonnet). Risk-shaped reward
+- **Hypothesis:** penalising risk cuts drawdown, invalid orders and seed variance without collapsing into HOLD.
+- **Change (reward only):**
+  `r = pnl/1000 − 0.0005|inv| − inv_quad·(inv/500)² − dd_coef·ΔDD⁺/1000 − trade_cost·[fill] − breach_pen·[would breach ±500]`
+- **Variants:**
+
+  | variant | dd_coef | inv_quad | trade_cost | breach_pen |
+  |---|---|---|---|---|
+  | light | 0.5 | 0.2 | 0.02 | 0.1 |
+  | medium | 1.0 | 0.5 | 0.05 | 0.3 |
+  | heavy | 2.0 | 1.0 | 0.15 | 1.0 |
+- **Results (mean):**
+
+  | variant | SCORE | R% | DD% | worst% | O |
+  |---|---|---|---|---|---|
+  | light | 0.26 | −0.39 | 4.65 | −9.6 | 27 |
+  | **medium** | **0.62** | **1.46** | 3.79 | **−2.9** | 30 |
+  | heavy | 0.56 | 0.95 | **3.38** | −3.7 | **14** |
+  | control (same pool) | 0.40 | 0.83 | 4.12 | −5.8 | 43 |
+
+  There was no collapse into HOLD (hold share ≤ 0.32) and no NaN.
+- **Conclusion:** keep medium, as it has the best score. Keep heavy as the option for risk and operational behaviour.
+- **Limitation:** it does not fix crash and downtrend, since there are no down-markets in training. The O term drops but stays above 0, because penalties cannot mask actions.
+
+### EXP-002: regime_rand (W2, Sonnet). Domain randomisation of the training market
+- **Hypothesis:** training on random regimes removes the long bias and the reliance on free limit fills.
+- **Change (training env only):**
+  - (a) pure `RandomRegimeEnv` with random length 150–1000
+  - (b) 50/50 mix of official and random episodes
+  - (c) curriculum from narrow to wide parameter ranges
+
+  The named stress scenarios were never used for training.
+- **Results (mean):**
+
+  | variant | SCORE | R% | DD% | worst% | O | crash% | downtrend% | trending% |
+  |---|---|---|---|---|---|---|---|---|
+  | **a_random** | **0.63** | **1.79** | **2.39** | **−1.19** | 24 | **+5.2** | **+4.1** | 4.3 |
+  | b_mix | 0.44 | 0.98 | 3.84 | −5.69 | 31 | −4.3 | −0.6 | 11.0 |
+  | c_curric | 0.52 | 1.43 | 3.36 | −2.97 | 32 | +4.5 | −1.1 | 7.7 |
+  | control (same pool) | 0.31 | 0.83 | 4.13 | −5.76 | 43 | −5.8 | −2.3 | 12.9 |
+- **Conclusion:** keep a_random. It is the biggest round-1 gain.
+  - b_mix keeps the long bias alive.
+  - The curriculum adds complexity for no gain.
+- **Limitation:**
+  - Seed 3 of a_random collapsed into high churn with no edge (598 trades, R ≈ 0).
+  - O is still 24.
+  - The tuning gain is partly in-distribution, because the random ranges overlap the stress scenarios by design. It must be confirmed on validation seeds and in ABIDES.
+- **Orchestrator follow-up:** a 3-seed ensemble of a_random with SafePolicy gave the following, versus +5% and +4% for the good single seeds.
+
+  | cap | R% | DD% | O | crash% | downtrend% |
+  |---|---|---|---|---|---|
+  | 300 | 0.82 | 1.67 | 0 | −0.1 | −2.2 |
+  | 500 | 1.23 | 1.99 | 0.1 | — | — |
+
+  The bad seed dilutes the ensemble, so ensembles should only use members that pass on tuning.
+
+### EXP-003: dqn_plus (W3, Sonnet). Algorithm and architecture upgrades
+- **Change:**
+  - full: Double DQN, duelling 128×128 with LayerNorm, 3-step returns, lr 1e-3 decaying to 1e-4, soft target τ = 0.005
+  - dd (ablation): Double and duelling on the 64×64 net only
+- **Results (mean):**
+
+  | variant | SCORE | R% | DD% | worst% | O |
+  |---|---|---|---|---|---|
+  | full | 0.46 | 0.38 | 4.32 | −5.85 | 30 |
+  | dd | 0.33 | −0.06 | 3.88 | −6.24 | 22 |
+  | control (same pool) | 0.49 | 0.83 | 4.12 | −5.76 | 43 |
+
+  Q-overestimation was still visible in dd seed 3.
+- **Conclusion:** drop it. The algorithm is not the bottleneck: every variant overfits the up-only training regimes.
+- **Limitation:** seed variance (about ±0.3 SCORE) is bigger than the difference between variants.
+
+### EXP-004: ppo (W4, Sonnet). PPO actor-critic
+- **Change:** separate Tanh actor and critic, GAE with λ = 0.95, clip 0.2, 2048-step rollouts, 150k steps.
+  Variants: main, big (128 units, higher entropy), lowent, and lowent with γ = 0.98.
+- **Results:** every variant has a negative mean R (−0.4% to −1.5%) and a worst scenario of −7% to −15%.
+  - The best model (big_s1) holds 62% of the time and barely beats HOLD.
+- **Failure mode:** greedy collapse. The sampled policy stays near uniform (entropy 1.7–2.1 out of a maximum of 2.2), but its argmax
+  becomes "market-buy 50" 98% of the time. That gives +13% in trending, −15% in crash and O = 99.
+  - PPO was not more stable across seeds than DQN.
+- **Conclusion:** drop it.
+
+### Round 1 summary
+**The training-market distribution is the main lever.** Regime randomisation (EXP-002a) was best, the medium/heavy
+risk reward (EXP-001) was second, and algorithm changes did nothing (EXP-003 and EXP-004).
+Round 2 combines a_random with the medium/heavy reward and adds a training-time action mask that matches SafePolicy.
+
+### EXP-005: abides_harness (W5, Sonnet). ABIDES-NG evaluation harness (infrastructure)
+- **What it is:** `student_work/abides_eval.py`. It is a `PolicyAgent(TradingAgent)` added with `run_simulation(config, runtime_agents=[...])`.
+  - **Each wakeup (60 s):** builds the observation with `shared.contract.build_observation` (L2 depth from 5 levels), places `action_to_order`
+    orders, cancels resting limits after 3 wakeups, and skips orders that would breach ±500 or that it cannot pay for.
+  - **Modes:** individual (each model alone) and `--competitive` (all models in one exchange).
+- **Check:** HOLD gives exactly 0 in every run. |inventory| never goes above 500. There are no NaNs. A run takes 10–40 s (low_liquidity under 1 s).
+- **Main finding, a distribution shift between practice and ABIDES:**
+  - The ABIDES price is ~$1000 vs $100. Cash then caps longs near 100 shares, while shorting is uncapped, so leverage can reach several × NAV.
+  - Calm ABIDES markets are 5–10× quieter.
+  - Spreads are under 1 bp to a few bp.
+  - Book imbalance is about ±0.6–0.85, against ±0.15 in practice.
+  - stress_test has extreme moves.
+- **Limitation:** we do not know how the lecturer's adapter defines depth, the wake interval or the cash checks.
+
+### EXP-006: combo (Round 2, Sonnet). Regime randomisation + risk reward + training-time action mask
+- **Change:** all configs use a_random training. 60k steps, seeds 1–5 for A, B and C.
+
+  | config | reward | training mask |
+  |---|---|---|
+  | A | medium | no |
+  | B | heavy | no |
+  | C | medium | SafePolicy rule, cap 300 (used for greedy, exploration and TD target) |
+  | D | as C, 150k steps | as C |
+- **Results (tuning, mean over seeds):**
+
+  | config | SCORE | DD% | worst% |
+  |---|---|---|---|
+  | B raw | **0.62** | 1.59 | −1.11 |
+  | B with SafePolicy 300 | 0.54 | | |
+  | C with SafePolicy 300 | 0.54 | | |
+  | A | 0.48–0.49 | | |
+  | D | 0.49–0.51 | | |
+
+  Seeds below HOLD: A 3/5, B 1/5, C 2/5, D 1/3.
+- **Conclusion:**
+  - Heavy reward plus random regimes is the best recipe.
+  - The training-time mask raises the worst seed but not the mean.
+  - Training longer does not help.
+  - Seed variance (0.3–0.8 SCORE within one config) is larger than the differences between configs.
+
+### Orchestrator, Round 2: ensembles and guards (validation seeds, practice market)
+Ensembles average the Q-values of seeds that pass on tuning. They are built with `student_work/compose.py`.
+
+| candidate | SCORE | R% | DD% | worst% | profitable |
+|---|---|---|---|---|---|
+| top5mix_safe400 (C_s1, C_s4, A_s4, B_s5, B_s2) | 0.79 | 2.34 | 0.99 | −0.77 | 0.79 |
+| Bpass4_safe400 (B s1, s2, s4, s5) | 0.73 | 2.10 | 1.07 | −0.25 | 0.71 |
+| ABCpass9_safe300 | 0.69 | 1.85 | 0.95 | −0.57 | 0.74 |
+| rule-momentum | 0.62 | 2.73 | 1.92 | −1.36 | 0.60 |
+| C_s1_safe300 (best single on tuning: 0.84) | 0.52 | 1.36 | 1.07 | −1.04 | 0.76 |
+| B_s5_safe300 (single) | 0.30 | 0.91 | 1.61 | −2.01 | 0.65 |
+| Ball5_safe300 (unfiltered, includes collapsed B_s3) | 0.51 | 0.92 | 0.91 | −1.06 | 0.66 |
+
+- **Single seeds that are "best on tuning" do not generalise. Filtered seed ensembles do.**
+- **Cap 400 is better than cap 300** in the practice market.
+
+### Orchestrator, Round 2: ABIDES guard sweep
+Runs are individual, on ABIDES seeds 11–15, templates stable_day, volatile_day, low_liquidity and stress_test (20 runs per model).
+
+Guards in SafePolicy:
+- `min_cash_ratio` blocks buys once cash falls below k × start, and `max_cash_ratio` blocks growing a short once cash rises above k × start. Together they cap exposure as a share of NAV, independent of price.
+- `brake_nav`: below that NAV return, the wrapper only de-risks, forcing market orders toward flat.
+
+| model | ABIDES R% | mean DD% | max DD% | stress_test | volatile_day | practice validation R% / DD% |
+|---|---|---|---|---|---|---|
+| rule-momentum | −10.40 | 11.2 | 132 | −36.2 | −5.2 | 2.73 / 1.92 |
+| top5 cap 400, no cash guard | −5.93 | 14.8 | 107 | +4.8 | −28.5 | 2.34 / 0.99 |
+| top5 + exposure ≤ 50% (0.5 / 1.5) | −1.02 | 10.4 | 144 | −2.8 | −1.1 | 2.34 / 1.00 |
+| top5 + exposure ≤ 40% (0.6 / 1.4) | −0.28 | 7.8 | 38.6 | −3.2 | +4.4 | 2.25 / 1.00 |
+| **top5 + exposure ≤ 30% (0.7 / 1.3)** | **+2.34** | **2.0** | **7.6** | +9.1 | +0.5 | 1.96 / 1.07 |
+| top5 + exposure ≤ 20% (0.8 / 1.2) | +3.26 | 2.3 | 11.5 | +12.9 | +0.3 | 1.59 / 0.99 |
+| top5 x30 + brake −5% | +2.35 | 2.0 | 6.9 | +9.1 | +0.5 | 1.96 / 1.07 |
+| B4 x30 | −20.7 | 25.1 | **401** (insolvent) | −83.1 | +0.7 | 1.79 / 1.07 |
+| B4 x30 + brake −5% | (stress/volatile only) | | 31.4 | −11.9 | +0.7 | |
+
+- **In ABIDES, exposure as a share of NAV decides survival.** The practice market prefers looser caps, ABIDES needs about 30%, and x30 is the compromise.
+- **The brake is the tail-risk insurance.** On seed 14 of stress_test, B4 x30 went from −428% (insolvent) to −24.7% with the brake.
+- **Caveat:** ABIDES seeds 11–15 were used to choose these guard levels, so they are now tuning data. The final ABIDES check uses seeds 21+.
+
+### EXP-007: abides_like (Round 3, Sonnet). Training on ABIDES-like regimes
+- **Change:** `RandomRegimeEnv(family="abides" | "mixed")`, using `envs.sample_abides_regime`, with heavy reward and 60k steps, seeds 1–5.
+  - The ABIDES-like sampler has prices of $50–$2000, calm regimes 5–10× quieter, spreads under 1 bp up to 10 bp, book
+    imbalance of ±0.3–0.9, and 25% extreme-stress episodes.
+  - Every model was evaluated with the g30 guard (cap 400, cash 0.7 / 1.3).
+- **ABIDES results (seeds 1–3, mean per family):**
+
+  | family | R% | mean DD% | max DD% |
+  |---|---|---|---|
+  | abides | −8.2 | 23 | 407 |
+  | mixed | −4.9 | 6.8 | — |
+  | refB (round-2 B seeds) | −3.5 | 30 | — |
+
+  The practice-market SCORE was about the same.
+- **Conclusion:** the hypothesis was not supported. Pure ABIDES-like training made results worse.
+  - mixed mostly taught smaller positions.
+  - Two stable mixed seeds (s3, s5) were kept as ensemble members.
+- **Limitation:** stress_test variance (−118% to +38%) swamps the differences between families.
+
+### Orchestrator, Round 4: broken-book guard
+- **Problem:** in ABIDES stress_test the book can empty out, with mid going from 100,000 to 24 cents. Any position is then
+  marked at a meaningless price, which caused both the −151% / −94% blowups and the rule's lucky +224%.
+- **Change:** `SafePolicy(max_spread_obs=0.5)`. While the spread feature is above 100 bps, no action may grow exposure.
+  The practice market never exceeds 40 bps, so its results are identical.
+- **stress_test results (seeds 11–15 and 31–40, top7 base, n = 15):**
+
+  | guard | mean R% | mean DD% | max DD% |
+  |---|---|---|---|
+  | none | +22.1 | 23.3 | 189 |
+  | **100 bps** | +8.0 | **7.0** | **21.6** |
+  | 50 bps | +2.7 | 11.1 | 39.3 |
+
+  Chosen: 100 bps.
+
 ## 5. Combinations
-Which winning ideas were combined and how the combination performed against the parts.
+- **Round 2:** the regime randomisation winner (EXP-002) was combined with the risk reward winners (EXP-001), giving EXP-006.
+  - Heavy reward plus random regimes was the best recipe.
+  - Adding a training-time mask did not help the mean.
+- **Seed ensembles** (mean Q-values over seeds that pass on tuning):
+  - On validation they beat every single seed: the best single seed scored 0.52, the best ensemble 0.79.
+  - Unfiltered ensembles are worse (0.51), because collapsed seeds dilute them.
+- **Deployment guard layers** (`SafePolicy`) were added one at a time, each on the evidence above:
+  share cap 400, then cash-based exposure ≤ 30% of NAV, then the −5% NAV brake, then the broken-book guard.
+- **Final ensemble:** the 5 round-2 members plus 2 round-3 "mixed" members (top7).
 
 ## 6. Final model selection
-- **Chosen model:**
-- **Reason for selection** (generalisation across scenarios and held-out seeds, not single-seed profit):
-- **Held-out results:**
-- **ABIDES-NG check:**
-- **Validator output** (`VALID` on the exact ZIP):
-- **Known limitation / failure mode:**
+- **Chosen model:** `top7mix_400_x30_b5_sp50`, rebuilt by `python -m student_work.build_final` into `outputs/model.pt`.
+  - A TorchScript `SafePolicy(Ensemble(7 DQN members))`, where each member is MLP 16-64-64-9. The members are:
+    - exp_combo-C_s1 and C_s4 (medium reward, training mask 300)
+    - A_s4 (medium reward)
+    - B_s5 and B_s2 (heavy reward)
+    - exp_abides_like-mixed_s3 and mixed_s5 (heavy reward, mixed regimes)
+  - Guard settings: cap 400, cash 0.7 / 1.3, brake −5%, spread guard 100 bps.
+- **Reason for selection:** a seed ensemble generalises where single seeds do not, and the guards turn the ABIDES tail risks
+  (leverage at a $1000 price, gap moves, broken books) into bounded losses.
+  - The choice follows the rubric: 50% return, 20% drawdown, 20% robustness, 10% operational.
+- **Pre-registered rule and how it was resolved:** before the holdout we fixed this rule: "keep top5 unless top7 has a better ABIDES
+  holdout mean and max DD < 15%".
+  - Both models failed the DD condition (top5 154%, top7 138%), because of the broken-book artifact. That was fixed afterwards
+    with the spread guard, selected on ABIDES seeds 11–15 and 31–40, not on the holdout.
+  - top7 was at least as good as top5 on every holdout aggregate, so top7 was chosen.
+- **Held-out results, practice market** (holdout seeds 30000–30019, 280 episodes; top7 before the spread guard, which does not change practice results):
+
+  | model | SCORE | R% | DD% | worst scenario % | profitable |
+  |---|---|---|---|---|---|
+  | **top7 (final)** | **0.713** | 2.23 | 1.35 | **−0.17** | 0.76 |
+  | rule-momentum | 0.688 | 3.15 | 1.80 | −1.49 | 0.60 |
+  | top5 | 0.588 | 2.07 | 1.09 | −0.59 | 0.75 |
+  | HOLD | 0.488 | 0 | 0 | 0 | 0 |
+  | starter-dqn-s7 | 0.025 | −0.17 | 4.39 | −7.26 | 0.41 |
+
+  Per scenario (top7): stable +0.09, trending +0.53, volatile +1.08, crash +7.22, downtrend +5.88, low_liq +0.96, choppy −0.17.
+  O = 0, so there were no invalid orders.
+- **ABIDES-NG check, final model, untouched seeds 41–45**, 4 templates, 60 s wake:
+
+  | model | mode | runs | R% | median R% | mean DD% | max DD% | skipped orders | profitable runs |
+  |---|---|---|---|---|---|---|---|---|
+  | **final** | individual | 20 | +2.19 | +0.06 | 1.20 | 8.9 | 0 | 55% |
+  | rule | individual | 20 | −5.44 | | 10.3 | 87.9 | | |
+  | starter-dqn | individual | 20 | +40.7 | −0.03 | 13.7 | 95.8 | 135 per run | |
+  | final (copy a) | competitive | 12 | +4.71 | | 2.9 | 18.3 | | |
+  | final (copy b) | competitive | 12 | +3.10 | | 3.0 | 15.8 | | |
+  | rule | competitive | 12 | +2.44 | | 6.1 | 42.8 | | |
+  | top5 | competitive | 12 | −2.73 | | 4.6 | 38.9 | | |
+
+  - In the competitive runs, both final copies, the rule, the starter DQN and top5 trade in one exchange.
+  - The starter DQN's +40.7% individual mean comes from leveraged lottery bets on broken stress_test books.
+- **Compatibility:** the model loads in a throwaway **torch 2.2.2 + numpy 1.26** venv and gives bit-identical outputs
+  (max diff 0, argmax agreement 100% on 1,400 observations). It was saved with torch 2.14.1.
+- **`shared.test_policy` (seed 101, one episode per scenario):**
+
+  | scenario | PnL |
+  |---|---|
+  | stable | +$300 |
+  | trending | −$174 |
+  | volatile | −$1,605 |
+
+  This is a single-seed snapshot, and the multi-seed protocol above is the basis for selection.
+- **Validator output:** not yet. The model has not been exported, because export waits for the team's go-ahead.
+- **Known limitations / failure modes:**
+  - **Trending markets.** The final model gives up most of the trending gains (+0.5% against +9% for the rule). Removing the long bias
+    is what made crash and downtrend profitable.
+  - **ABIDES stress_test** is still a lottery driven by simulator artifacts (books emptying out). The guards bound the loss but cannot make it predictable.
+  - **The lecturer's ABIDES adapter is unknown:** depth definition, wake interval, cash checks and price scale. The guards are
+    written to hold at any price, and they rely on the observation features `inventory`, `cash_ratio`, `nav_return` and `spread_bps`.
+  - **Seed variance in DQN training is very large.** This is why the members were filtered on tuning seeds and then ensembled.
 
 ## 7. Answers to the guide's analysis questions (optional, for coursework)
