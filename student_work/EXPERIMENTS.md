@@ -372,3 +372,41 @@ Guards in SafePolicy:
     written to hold at any price, and they rely on the observation features `inventory`, `cash_ratio`, `nav_return` and `spread_bps`.
   - **Seed variance in DQN training is very large.** This is why the members were filtered on tuning seeds and then ensembled.
 
+
+## 7. Stage 2: rounds 5–8 (started 2026-10-23)
+The goal is a challenger (v2) that beats the incumbent v1 (§6) on fresh, pre-registered holdout seeds. If none does, v1 stays.
+v1 is backed up in `outputs/backup_v1/` (`model.pt` and `TEAM_01.zip`).
+
+### Pre-registration (written before any stage-2 result)
+**Seed registry.** The v1 holdout sets are spent and are not used for decisions any more.
+
+| set | practice (`evaluate.SEED_SETS`) | ABIDES | who |
+|---|---|---|---|
+| tuning | `tuning` 10000–10009 | 51–55 | workers and orchestrator |
+| validation | `validation` 20000–20009 | 56–60 | orchestrator only, between rounds |
+| holdout2 | `holdout2` 40000–40019 | 61–70 | final gate only, used once |
+| spent | `holdout` 30000–30019 | 1–3, 11–15, 21–45 | not used for decisions |
+
+**ABIDES grid G11** (`abides_eval --template G11`, individual, wake 60 s, depth 5 levels):
+- stable_day, volatile_day, low_liquidity, stress_test
+- the never-used templates trending_day, rmsc04, liquid_market, thin_market
+- the overlays stable_day+with_execution (a POV agent buying 1.2M shares, so sustained buy pressure),
+  stable_day+with_execution:ASK (sell pressure) and volatile_day+with_momentum
+
+The ABIDES SCORE (`student_work/abides_report.py`) is the same rank-normalised 50/20/20/10 composite over template × seed runs,
+with an exact always-HOLD row added to the pool.
+
+**Final gate.** A challenger replaces v1 only if **all** of these hold:
+1. **Practice:** on `holdout2`, its SCORE is higher than v1's. The pool is v1, the challengers, rule-momentum, HOLD and starter-s7.
+2. **ABIDES G11 individual, seeds 61–70:**
+   - mean R ≥ v1's
+   - mean DD ≤ 1.25 × v1's
+   - max DD ≤ max(15%, v1's)
+   - 0 skipped orders per run on average (rounded)
+3. **ABIDES competitive:** v1, the challenger(s), rule, starter-s7 and starter-s8 trade in one exchange, on 6 G11 templates
+   (stable_day, volatile_day, stress_test, trending_day, stable_day+with_execution, stable_day+with_execution:ASK) × seeds 61–65.
+   - The challenger's mean R ≥ v1's in the same runs.
+   - Max DD ≤ max(20%, v1's).
+4. **Compatibility:** the contract check passes, and outputs under torch 2.2.2 + numpy 1.26 are bit-identical.
+
+If several challengers pass, the one with the highest holdout2 SCORE plus ABIDES SCORE wins. If none passes, v1 stays and this is reported as a negative result.

@@ -48,6 +48,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = REPO_ROOT / "outputs" / "abides_eval"
 SYMBOL = "ABM"
 DEFAULT_TEMPLATES = ["stable_day", "volatile_day", "low_liquidity", "stress_test"]
+# Stage-2 grid: the 4 templates above, the 4 never-used base templates and 3 overlay combinations.
+# "a+b" stacks templates (later ones deep-merge over earlier ones); "with_execution:ASK" makes the
+# POV execution agent sell instead of buy (default BID = sustained buy pressure).
+GRIDS = {
+    "G11": DEFAULT_TEMPLATES + ["trending_day", "rmsc04", "liquid_market", "thin_market",
+                                "stable_day+with_execution", "stable_day+with_execution:ASK",
+                                "volatile_day+with_momentum"],
+}
 NS = 1_000_000_000
 
 
@@ -366,6 +374,18 @@ def feature_stats(obs_list: list[np.ndarray]) -> dict:
     }
 
 
+def _apply_template_spec(builder, spec: str):
+    """Apply 'base[+overlay[:OPT]]...' to a SimulationBuilder. OPT is only BID/ASK for with_execution."""
+    for part in spec.split("+"):
+        name, _, opt = part.partition(":")
+        builder.apply_template(name)
+        if opt:
+            if name != "with_execution" or opt.upper() not in ("BID", "ASK"):
+                raise ValueError(f"bad template option {part!r}")
+            builder._apply_template_dict({"agents": {"pov_execution": {"params": {"direction": opt.upper()}}}})
+    return builder
+
+
 def run_one(task: dict) -> dict:
     """Run one ABIDES simulation. Top-level so it can run in a worker process."""
     warnings.filterwarnings("ignore")
@@ -386,12 +406,12 @@ def run_one(task: dict) -> dict:
             policy=Policy(name, spec), wake_ns=wake_ns,
             depth_levels=task["depth_levels"], stale_wakeups=task["stale"],
         ))
-    builder = SimulationBuilder().apply_template(template).ticker(SYMBOL).seed(seed)
+    builder = _apply_template_spec(SimulationBuilder(), template).ticker(SYMBOL).seed(seed)
     if task.get("r_bar"):      # optional experiment: rescale the fundamental price level
         mkt = builder._market
         builder.oracle(mkt.oracle.model_copy(update={"r_bar": int(task["r_bar"])}))
     config = builder.build()
-    log_dir = str(OUT_DIR / "logs" / f"{template}_{seed}_{int(time.time()*1000)}")
+    log_dir = str(OUT_DIR / "logs" / f"{template.replace('+', '_').replace(':', '_')}_{seed}_{int(time.time()*1000)}")
     t0 = time.time()
     result = run_simulation(config, log_dir=log_dir, runtime_agents=agents)
     runtime_s = time.time() - t0
@@ -526,7 +546,8 @@ def main(argv=None):
     p.add_argument("--model", action="append", required=True,
                    help="name=path.pt | path.pt | HOLD | rule (repeatable)")
     p.add_argument("--template", action="append", default=None,
-                   help=f"ABIDES template (repeatable). Default: {' '.join(DEFAULT_TEMPLATES)}")
+                   help=f"ABIDES template (repeatable), 'a+b' to stack overlays, or a grid name "
+                        f"({', '.join(GRIDS)}). Default: {' '.join(DEFAULT_TEMPLATES)}")
     p.add_argument("--seeds", type=int, nargs="+", default=[1])
     p.add_argument("--wake", type=int, default=60, help="seconds of simulated time between wakeups")
     p.add_argument("--competitive", action="store_true",
@@ -548,6 +569,7 @@ def main(argv=None):
     p.add_argument("--tag", default=None, help="output file tag")
     args = p.parse_args(argv)
     args.template = args.template or DEFAULT_TEMPLATES
+    args.template = [t for spec in args.template for t in GRIDS.get(spec, [spec])]
 
     models = [parse_model_arg(m) for m in args.model]
     names = [n for n, _ in models]

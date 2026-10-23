@@ -30,7 +30,8 @@ LENGTHS = [300, 1000]
 SEED_SETS = {
     "tuning": list(range(10_000, 10_010)),       # workers tune against these
     "validation": list(range(20_000, 20_010)),   # orchestrator only, between rounds
-    "holdout": list(range(30_000, 30_020)),      # used once, for the final pick
+    "holdout": list(range(30_000, 30_020)),      # used once, for the v1 final pick (spent)
+    "holdout2": list(range(40_000, 40_020)),     # used once, for the stage-2 final gate (v2 vs v1)
     "smoke": [10_000, 10_001],                   # quick check while developing
 }
 WEIGHTS = dict(R=0.5, D=0.2, C=0.2, O=0.1)
