@@ -25,7 +25,12 @@ from student_work.evaluate import composite
 def load_rows(paths, mode=None) -> list[dict]:
     rows = []
     for f in paths:
-        rows += json.loads(Path(f).read_text())["rows"]
+        if str(f).endswith(".jsonl"):  # an interrupted or running batch (<tag>.partial.jsonl)
+            for line in Path(f).read_text().splitlines():
+                if line.strip():
+                    rows += json.loads(line)["result"]["rows"]
+        else:
+            rows += json.loads(Path(f).read_text())["rows"]
     if mode:
         rows = [r for r in rows if r["mode"] == mode]
     return rows

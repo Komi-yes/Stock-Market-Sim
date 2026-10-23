@@ -29,7 +29,7 @@ import json
 import sys
 import time
 import warnings
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -55,6 +55,10 @@ GRIDS = {
     "G11": DEFAULT_TEMPLATES + ["trending_day", "rmsc04", "liquid_market", "thin_market",
                                 "stable_day+with_execution", "stable_day+with_execution:ASK",
                                 "volatile_day+with_momentum"],
+    # Cheaper worker screening grid (round 6+): calm controls plus the templates where v1 failed in round 5.
+    # The BID with_execution overlay is left out because it takes 600-1000 s per run.
+    "S6": ["stable_day", "volatile_day", "low_liquidity", "stress_test",
+           "stable_day+with_execution:ASK", "volatile_day+with_momentum"],
 }
 NS = 1_000_000_000
 
@@ -410,6 +414,11 @@ def run_one(task: dict) -> dict:
     if task.get("r_bar"):      # optional experiment: rescale the fundamental price level
         mkt = builder._market
         builder.oracle(mkt.oracle.model_copy(update={"r_bar": int(task["r_bar"])}))
+    if not task.get("book_logging"):
+        # The exchange's L2 book log and per-order logs cost ~1.5 GB per full-day run and are not used here
+        # (the policy builds its observation from its own book queries), so they are off by default.
+        builder.exchange(builder._market.exchange.model_copy(update={"book_logging": False, "log_orders": False}))
+        builder.log_orders(False)
     config = builder.build()
     log_dir = str(OUT_DIR / "logs" / f"{template.replace('+', '_').replace(':', '_')}_{seed}_{int(time.time()*1000)}")
     t0 = time.time()
@@ -432,12 +441,14 @@ def run_one(task: dict) -> dict:
         row["_obs"] = [o.tolist() for o in ag.obs_log] if task.get("keep_obs") else None
         rows.append(row)
     # market context
-    l1 = result.markets[SYMBOL].l1_close
     ctx = dict(template=template, seed=seed, runtime_s=runtime_s,
-               n_background=len(result.agents) - len(agents),
-               pct_time_no_bid=result.markets[SYMBOL].liquidity.pct_time_no_bid,
-               pct_time_no_ask=result.markets[SYMBOL].liquidity.pct_time_no_ask,
-               total_volume=result.markets[SYMBOL].liquidity.total_exchanged_volume)
+               n_background=len(result.agents) - len(agents))
+    try:   # liquidity stats need the book log (--book-logging)
+        liq = result.markets[SYMBOL].liquidity
+        ctx.update(pct_time_no_bid=liq.pct_time_no_bid, pct_time_no_ask=liq.pct_time_no_ask,
+                   total_volume=liq.total_exchanged_volume)
+    except Exception:
+        pass
     return dict(rows=rows, context=ctx)
 
 
@@ -479,12 +490,21 @@ def practice_feature_stats(policy_specs, seeds, steps=300) -> dict:
 # CLI
 # ---------------------------------------------------------------------------
 
+def _task_key(t: dict) -> str:
+    return json.dumps([t["template"], t["seed"], t["models"], t["wake"], t["depth_levels"], t["stale"],
+                       t["competitive"], t["r_bar"]])
+
+
+def _strip_obs(res: dict) -> dict:
+    return dict(res, rows=[{k: v for k, v in r.items() if k != "_obs"} for r in res["rows"]])
+
+
 def build_tasks(args, models):
     tasks = []
     for tpl in args.template:
         for seed in args.seeds:
             base = dict(template=tpl, seed=seed, wake=args.wake, depth_levels=args.depth_levels,
-                        stale=args.stale, keep_obs=False, r_bar=args.r_bar)
+                        stale=args.stale, keep_obs=False, r_bar=args.r_bar, book_logging=args.book_logging)
             if args.competitive:
                 tasks.append(dict(base, models=models, competitive=True))
             else:
@@ -567,6 +587,10 @@ def main(argv=None):
     p.add_argument("--features-model", default=None,
                    help="model name used for the feature comparison (default: last model given)")
     p.add_argument("--tag", default=None, help="output file tag")
+    p.add_argument("--book-logging", action="store_true",
+                   help="keep the exchange book/order logs (needed only for the liquidity context stats; ~1.5 GB/run)")
+    p.add_argument("--resume", action="store_true",
+                   help="skip tasks already saved in outputs/abides_eval/<tag>.partial.jsonl (needs --tag)")
     args = p.parse_args(argv)
     args.template = args.template or DEFAULT_TEMPLATES
     args.template = [t for spec in args.template for t in GRIDS.get(spec, [spec])]
@@ -580,17 +604,36 @@ def main(argv=None):
           f"mode={'competitive' if args.competitive else 'individual'}", flush=True)
 
     t0 = time.time()
-    results = []
-    if args.jobs > 1:
-        with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-            for res in ex.map(run_one, tasks):
-                results.append(res)
-    else:
-        for i, t in enumerate(tasks, 1):
-            res = run_one(t)
-            results.append(res)
-            print(f"  [{i}/{len(tasks)}] {t['template']} seed={t['seed']} "
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    tag = args.tag or datetime.now().strftime("run_%Y%m%d_%H%M%S")
+    partial = OUT_DIR / f"{tag}.partial.jsonl"
+    # Every finished simulation is appended to <tag>.partial.jsonl, so an interrupted batch can --resume.
+    done: dict[str, dict] = {}
+    if args.resume and partial.exists():
+        for line in partial.read_text().splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                done[rec["key"]] = rec["result"]
+        print(f"resuming: {len(done)} of {len(tasks)} simulation(s) already saved", flush=True)
+    elif partial.exists():
+        partial.unlink()
+    todo = [t for t in tasks if _task_key(t) not in done]
+    with open(partial, "a") as fh:
+        def record(i, t, res):
+            fh.write(json.dumps(dict(key=_task_key(t), result=_strip_obs(res))) + "\n")
+            fh.flush()
+            done[_task_key(t)] = res
+            print(f"  [{len(done)}/{len(tasks)}] {t['template']} seed={t['seed']} "
                   f"{[m[0] for m in t['models']]} sim={res['context']['runtime_s']:.1f}s", flush=True)
+        if args.jobs > 1:
+            with ProcessPoolExecutor(max_workers=args.jobs) as ex:
+                futs = {ex.submit(run_one, t): (i, t) for i, t in enumerate(todo)}
+                for f in as_completed(futs):
+                    record(*futs[f], f.result())
+        else:
+            for i, t in enumerate(todo):
+                record(i, t, run_one(t))
+    results = [done[_task_key(t)] for t in tasks]
     rows = [r for res in results for r in res["rows"]]
     contexts = [res["context"] for res in results]
     print()
@@ -602,8 +645,6 @@ def main(argv=None):
             practice = practice_feature_stats(models, args.seeds + [101, 102, 103])
         print_feature_comparison(rows, practice, args.features_model or models[-1][0])
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    tag = args.tag or datetime.now().strftime("run_%Y%m%d_%H%M%S")
     out = OUT_DIR / f"{tag}.json"
     for r in rows:
         r.pop("_obs", None)

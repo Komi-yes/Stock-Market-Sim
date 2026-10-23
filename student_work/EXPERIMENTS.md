@@ -410,3 +410,61 @@ with an exact always-HOLD row added to the pool.
 4. **Compatibility:** the contract check passes, and outputs under torch 2.2.2 + numpy 1.26 are bit-identical.
 
 If several challengers pass, the one with the highest holdout2 SCORE plus ABIDES SCORE wins. If none passes, v1 stays and this is reported as a negative result.
+
+### Round 5 (orchestrator): diagnosis of v1 on G11, ABIDES tuning seeds 51–55
+**Infrastructure.**
+- The harness has overlays (`a+b`, `with_execution:ASK`) and the G11 and S6 grids.
+- Exchange book and order logging are now off by default. They used ~1.8 GB per run and made 18 parallel runs thrash 32 GB of RAM;
+  results are identical with logging off (checked on 2 runs).
+- Results stream to a resumable `<tag>.partial.jsonl`.
+
+**G11 individual (55 runs per model):**
+
+| model | ABIDES SCORE | R% | median R% | mean DD% | max DD% | worst template | profitable | skips/run |
+|---|---|---|---|---|---|---|---|---|
+| HOLD | 0.733 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| rule | 0.667 | +8.60 | −0.11 | 10.6 | 101.9 | −9.9 | 0.09 | 1.8 |
+| **v1** | 0.517 | **−0.31** | −0.02 | 3.4 | 37.8 | −7.1 (sell pressure) | 0.45 | 0.3 |
+| starter-s7 | 0.083 | −1.13 | −0.02 | 14.1 | 217.7 | −63 | 0.45 | 113 |
+
+**v1 per template (mean R%):**
+
+| template | v1 R% |
+|---|---|
+| stable_day | −0.08 |
+| volatile_day | −4.44 (seed 51: −19.2) |
+| low_liquidity | −0.20 |
+| stress_test | +3.75 |
+| trending_day | +0.16 |
+| rmsc04 | 0.00 |
+| liquid | −0.02 |
+| thin | +0.08 |
+| +exec BID | +1.24 |
+| +exec ASK | −7.13 (seed 52: −31.3) |
+| volatile+momentum | +3.41 (seeds: −6.8 … +23.2) |
+
+The rule's mean comes from two book collapses (+368% on stress_test s51 and +240% on trending_day s52, with mid falling to 54 and 574 cents). Its median is −0.11% and only 9% of its runs are profitable.
+
+**Adapter sensitivity (v1, 4 templates × seeds 51–52):**
+
+| setting | v1 R% |
+|---|---|
+| wake 60 s (base) | −3.89 |
+| wake 30 s | −2.03 |
+| wake 120 s | −1.60 |
+| depth 1 level | −1.08 |
+| depth 10 levels | −0.25 |
+
+The same two runs (volatile_day s51, stress_test s51) dominate every setting. No adapter setting is much worse than the base.
+
+**Diagnosis.** v1's ABIDES losses come from execution mechanics, not from its market view:
+1. **Resting-order overshoot.** Max |inventory| reaches 120–170 shares, which is more than 100% of NAV at a $1000 price, although the cash guard targets about 30%.
+   Several LARGE limit orders rest at once (they are cancelled after 3 wakeups) and fill together. The guard only checks cash and inventory at decision time.
+   The `open_orders` feature (x[12] = resting/10) shows the resting orders, but the guard does not use it. Volatile_day s51 (−19% on a −17% move) is this case.
+2. **Fire sales in one-sided books.** Under sell pressure (exec ASK s52) v1 lost −31% (DD 38%) while the mid ended flat.
+   The −5% brake forces market orders even when the book is broken, so they fill deep in an empty bid side.
+3. **Churn.** v1 market-buys small about 50% of the time and limit-sells large about 15%, with about 270 fills per run. With sub-bp spreads this is close to neutral, but it is not an edge.
+
+**Amendment to gate criterion 1** (made before any holdout2 run): "higher than v1's" becomes **"≥ v1's"**.
+A guard-only fix (resting orders, broken book) changes nothing in the practice market, where open_orders = 0 and the spread is ≤ 40 bps. Its practice SCORE is then
+identical to v1's by construction, and a strict ">" would reject it on a tie.
