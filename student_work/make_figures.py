@@ -167,16 +167,16 @@ def fig4():
 
 
 def fig5():
-    """Plain-language flow diagram: how the submitted model (v1) turns market data into one action."""
+    """Plain-language flow diagram: how the submitted model (v2) turns market data into one action."""
     from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
     fig, ax = plt.subplots(figsize=(12.5, 3.9))
     ax.set_xlim(0, 12)
     ax.set_ylim(0, 3.6)
     ax.axis("off")
     boxes = [
-        (0.1, "1. Mira el mercado", "16 datos:\nprecios recientes,\nvolatilidad, diferencia\ncompra-venta, su dinero\ny sus acciones", INK2),
-        (3.1, "2. Siete redes opinan", "cada red puntúa\nlas 9 acciones posibles;\nse promedian las\npuntuaciones\n(como un comité)", COLOR["v1"]),
-        (6.1, "3. Capa de seguridad", "veta lo arriesgado:\nexposición > 30 %,\npérdidas > 5 %,\nmercado sin\ncompradores", COLOR["v2"]),
+        (0.1, "1. Mira el mercado", "16 datos: precios,\nvolatilidad, su dinero\ny sus acciones; los datos\ndel libro de órdenes se\nsustituyen por valores\nnormales", INK2),
+        (3.1, "2. Nueve redes opinan", "cada red puntúa\nlas 9 acciones posibles;\nse promedian las\npuntuaciones\n(como un comité)", COLOR["v1"]),
+        (6.1, "3. Capa de seguridad", "veta lo arriesgado:\nexposición > 30 %,\npérdidas > 5 %, mercado\nsin compradores, órdenes\ngrandes con otras\nen espera", COLOR["v2"]),
         (9.1, "4. Decide", "elige la acción con\nmejor puntuación:\nesperar, comprar\no vender\n(10 o 50 acciones)", COLOR["rule"]),
     ]
     for x, title, body, color in boxes:
@@ -189,7 +189,7 @@ def fig5():
     for x in (2.87, 5.87, 8.87):
         ax.add_patch(FancyArrowPatch((x, 1.4), (x + 0.21, 1.4), arrowstyle="-|>", mutation_scale=16,
                                      color=INK2, linewidth=2))
-    ax.set_title("Cómo decide el modelo entregado (v1), una vez por minuto de mercado", loc="left")
+    ax.set_title("Cómo decide el modelo entregado (v2), una vez por minuto de mercado", loc="left")
     _save(fig, "fig5_como_decide.png")
 
 

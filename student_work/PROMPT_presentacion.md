@@ -60,7 +60,7 @@ If not, place the PNGs as they are: never stretch them, and never recolour them.
 | Orden a mercado / orden límite | Comprar o vender ya, frente a comprar o vender solo a un precio fijado (puede quedar en espera) |
 | Spread | Diferencia entre precio de compra y de venta; si es enorme, el mercado está "roto" |
 | Momentum | Tendencia del precio a seguir en la misma dirección |
-| v1 / v2 | Versión 1 (entregada) y versión 2 (candidata) |
+| v1 / v2 | Versión 1 (primer modelo) y versión 2 (modelo mejorado, el que entregamos) |
 | TorchScript | Formato del archivo entregado; PyTorch es la herramienta con la que se entrenan las redes |
 
 ## 4. Slide-by-slide content
@@ -78,10 +78,10 @@ If not, place the PNGs as they are: never stretch them, and never recolour them.
    Key message: ganar mucho una vez no basta; hay que ganar sin caídas grandes.
 4. **Cómo aprende: aprendizaje por refuerzo (RL).** Four-step cycle as a vector loop: observa 16 datos → elige 1 de 9 acciones → recibe una nota → repite miles de veces.
    - Analogy line: "como aprender un videojuego a base de partidas".
-5. **Cómo decide nuestro modelo.** Use `fig5_como_decide.png`, or rebuild it as 4 vector boxes:
-   - Mira el mercado (grey)
-   - Siete redes opinan (orange)
-   - Capa de seguridad (blue)
+5. **Cómo decide nuestro modelo entregado (v2).** Use `fig5_como_decide.png`, or rebuild it as 4 vector boxes:
+   - Mira el mercado (grey): 16 datos; los datos del libro de órdenes se sustituyen por valores normales
+   - Nueve redes opinan (orange)
+   - Capa de seguridad (blue): exposición máx. 30 %, freno al −5 %, no operar con el mercado roto, ninguna orden grande mientras otras siguen en espera
    - Decide (green-aqua)
 6. **El punto de partida tenía tres problemas.** Three columns, each with one line icon:
    - solo sabía comprar
@@ -100,7 +100,7 @@ If not, place the PNGs as they are: never stretch them, and never recolour them.
    - capa de seguridad = cinturón y frenos: máx. 30 % del dinero en riesgo, freno al −5 %, no operar con el mercado roto
 
    One small line: "también registramos lo que no funcionó (PPO)".
-9. **El resultado: v1, el modelo entregado.** Hero numbers from the practice final exam:
+9. **El resultado de la primera etapa: v1.** Hero numbers from the practice final exam:
    - +2,23 % ganancia media
    - 1,35 % caída media
    - 0 órdenes inválidas
@@ -114,16 +114,22 @@ If not, place the PNGs as they are: never stretch them, and never recolour them.
 12. **Las reglas del examen final se escribieron antes.** Table with 6 rows and columns Condición / v2 / v1 / ¿Cumple? (data in section 6). Mark the failed row with the word "No" and a thin red outline. Mark the practice row "Sí (empate exacto)".
 13. **El examen final en ABIDES-NG.** Use `fig2_abides_prueba_final.png`. Callout: "v2 gana más de media (+3,25 % frente a +0,60 %), pero una simulación cayó un 126 %".
 14. **Con todos los programas en el mismo mercado.** Use `fig4_abides_competitivo.png`. Message: v2 is the most balanced (+3,31 % with a 15 % worst drop). Others earn more on average but with drops of up to 93 %.
-15. **Decisión: mantenemos v1.**
-    - Two short paragraphs: why (we respect rules fixed in advance; one catastrophic drop weighs 20 % of the grade).
-    - The root cause: in an empty market the loss brake sold at an absurd price. v1 has the same weakness: −97 % once.
-    - Next step: make the brake wait while the market is broken, and test on new simulations.
-    - Honesty note: the practice condition passed only as an exact tie, because before the exam we changed "mejor que v1" to "igual o mejor que v1".
+15. **Decisión del equipo: entregamos v2.** Mark v2 in blue.
+    - Hero numbers, v2 against v1:
+      - ABIDES-NG: +3,25 % vs +0,60 %
+      - mercado compartido: +3,31 % vs +0,75 %
+      - simulaciones con ganancia en el mercado compartido: 73 % vs 50 %
+      - simulaciones con caídas de más del 20 %: 3,6 % vs 5,5 %
+    - Why: v2 is better on almost everything the grade measures, and v1 has the same weak point (−97 % once).
+    - Transparency box, with a thin outline and no red fill. It says:
+      - Choosing v2 departs from the rule we fixed before the exam (worst drop no bigger than v1's).
+      - The practice condition passed only as an exact tie, after we changed "mejor que v1" to "igual o mejor que v1" before the exam.
+    - Known risk and next step: in an empty market the loss brake can sell at an absurd price (v2 −126 % once). The fix is to make the brake wait while the market is broken, and test it on new simulations.
 16. **Lo que aprendimos.** Four short lines with line icons:
     - variedad de práctica mayor que algoritmo sofisticado
     - un comité mayor que un experto
     - probar pronto en el entorno real
-    - reglas previas nos protegen de engañarnos
+    - reglas previas hacen visibles las decisiones difíciles: la media y el peor caso pueden apuntar a modelos distintos
 
     Close with a small glossary strip of the abbreviations used.
 

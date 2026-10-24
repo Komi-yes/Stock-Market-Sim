@@ -311,8 +311,9 @@ Guards in SafePolicy:
 - **Final ensemble:** the 5 round-2 members plus 2 round-3 "mixed" members (top7).
 
 ## 6. Final model selection
-> **Stage 2 update (2026-10-23):** v1 below is still the submitted model. The stage-2 challenger (sel9_rm3_nb) failed the
-> pre-registered gate on ABIDES max drawdown (116% vs 98%), although it was better on most averages. See §7, "Final gate, stage 2".
+> **Stage 2 update (2026-10-23):** the section below describes v1, the stage-1 model. **The submitted model is now v2 (sel9_rm3_nb).**
+> v2 failed the pre-registered gate on ABIDES max drawdown (116% vs 98%), and the team chose it anyway because it was better on most averages.
+> This is a recorded deviation from our own rule; see §7, "Team decision: deviation from the gate".
 
 - **Chosen model:** `top7mix_400_x30_b5_sp50`, rebuilt by `python -m student_work.build_final` into `outputs/model.pt`.
   - A TorchScript `SafePolicy(Ensemble(7 DQN members))`, where each member is MLP 16-64-64-9. The members are:
@@ -699,3 +700,36 @@ The challenger's R is at least v1's (3.31 ≥ 0.75), and its max DD of 15.3 is w
 v2 is better on almost every average: practice DD and worst scenario, ABIDES mean and trimmed R, competitive R and profitable share.
 It still has one catastrophic run (−126%) from the forced-market-order brake in a broken book. v1 has the same weakness (−97%).
 The fix to test next is v2 + `broken_brake=1` on fresh ABIDES seeds 71+.
+
+### Team decision: deviation from the gate (2026-10-23)
+**The team (Daniel Palacios, Sofia Ariza) decided to submit v2 (sel9_rm3_nb) instead of v1, although v2 failed gate criterion 2 (max DD).**
+This is a deliberate deviation from the pre-registered rule, and it is recorded here so it can be judged.
+
+**Reasons given.**
+- On the holdout2 seeds, v2 beats v1 on most of what the rubric weighs. The ABIDES SCORE is 0.600 vs 0.500.
+- **ABIDES individual mean R:** +3.25 vs +0.60. Trimmed R: +1.46 vs +0.56. Share of runs with DD > 20%: 3.6% vs 5.5%.
+- **ABIDES competitive:** R +3.31 vs +0.75, profitable runs 0.73 vs 0.50, max DD 15.3 vs 15.5.
+- **Practice holdout2:** DD 0.98 vs 1.27, worst scenario −0.64 vs −1.25. The SCORE is tied.
+- v1 has the same failure mechanism: −97% in one run.
+
+**What the rule was protecting against, and what remains true.**
+- v2's worst single ABIDES run (−126%, volatile+momentum s65) is worse than v1's worst (−97%). Max DD is 20% of the rubric, and one such event in the tournament would hurt.
+- v2's practice mean R is lower (1.32 vs 1.90). The practice criterion passed only as an exact tie, under the "≥" amendment.
+- The forced-market-order brake in a broken book is still a known weakness. Its fix (`broken_brake=1`) has not been tested on fresh seeds.
+
+**Release (v2).**
+- `student_work/build_final.py` now rebuilds v2 by default and v1 with `--v1`. v2 is v1's 7 members + farm C_s12 + C_s7, inside `BookNeutral`, with the v1 GUARD + `resting_mode=3`.
+- Both rebuilds are exact against the tested files: v2 against `outputs/exp_orch_sel9_rm3_nb/model.pt`, v1 against `outputs/backup_v1/model.pt`.
+  The check used 5001 observations, half of them with resting orders; max diff 0 and every argmax the same.
+- **`submission/TEAM_01.zip` was re-exported with v2. The validator prints `VALID`.** The ZIP contains only `model.pt` and `metadata.json`.
+- The `model.pt` inside the ZIP gives bit-identical outputs under torch 2.2.2 + numpy 1.26.
+- The v1 model and ZIP are kept in `outputs/backup_v1/`.
+- **`shared.test_policy`, seed 101, one episode per scenario:**
+
+  | scenario | v2 PnL | v1 PnL |
+  |---|---|---|
+  | stable | +$170 | +$300 |
+  | trending | −$77 | −$174 |
+  | volatile | −$1,299 | −$1,605 |
+
+  This is a single-seed snapshot and is not used for selection.

@@ -127,7 +127,7 @@ p("La parte del programa que \"piensa\" es una red neuronal: una fórmula matem�
   "la experiencia. El tipo concreto que usamos se llama DQN (Deep Q-Network, \"red profunda de valores Q\"): "
   "para cada una de las 9 acciones calcula una puntuación de lo buena que parece, y elige la más alta.")
 figure("fig5_como_decide.png",
-       "de izquierda a derecha, el programa recibe los datos, siete redes dan su puntuación a cada acción, una "
+       "de izquierda a derecha, el programa recibe los datos, nueve redes dan su puntuación a cada acción, una "
        "capa de seguridad tacha las acciones peligrosas y se ejecuta la mejor de las que quedan.")
 
 h("4. El punto de partida y sus problemas", 1)
@@ -170,7 +170,7 @@ table(["Idea", "Analogía", "Efecto"], [
 p("También probamos ideas que no funcionaron (otros algoritmos de aprendizaje, como PPO, siglas de Proximal "
   "Policy Optimization). Las dejamos anotadas: saber qué no funciona también es un resultado.")
 p("El resultado de esta etapa fue el modelo que llamamos v1 (versión 1): el comité de 7 redes con la capa "
-  "de seguridad. Es el modelo que está entregado.")
+  "de seguridad. Fue nuestro primer modelo entregado; en la segunda etapa lo mejoramos.")
 
 h("6. Segunda etapa: buscar los puntos débiles", 1)
 p("Con más tiempo, pusimos a prueba v1 en 11 tipos de mercado del simulador ABIDES-NG, incluidos algunos que "
@@ -220,23 +220,30 @@ figure("fig4_abides_competitivo.png",
        "programas de arriba a la derecha ganan más de media, pero con caídas de hasta el 93 %.", width=5.6)
 p("v2 fue mejor en casi todas las medias, pero en una sola simulación perdió un 126 % del dinero. La causa: "
   "el mercado se quedó sin compradores, el freno de pérdidas obligó a cerrar la posición de inmediato y la "
-  "operación salió a un precio absurdo. Como no cumplió la condición de la peor caída, mantuvimos v1 como "
-  "modelo entregado.", bold_prefix="Decisión. ")
-p("Una condición (la nota de práctica) solo se cumplió por un empate exacto, y eso fue posible porque antes "
-  "del examen cambiamos la regla de \"mejor que v1\" a \"igual o mejor que v1\". Lo contamos porque es parte "
-  "de hacer las cosas de forma honesta.", bold_prefix="Transparencia. ")
-p("v1 tiene el mismo punto débil (perdió un 97 % en una simulación parecida). La mejora pendiente es que el "
-  "freno espere cuando el mercado está vacío en lugar de vender a cualquier precio, y probarla con "
-  "simulaciones nuevas.", bold_prefix="Siguiente paso. ")
+  "operación salió a un precio absurdo. Por eso v2 no cumplió la condición de la peor caída.",
+  bold_prefix="Lo que pasó. ")
+p("Aun así, el equipo decidió entregar v2. Gana más que v1 en el simulador realista (+3,25 % frente a "
+  "+0,60 %), gana más y con más regularidad cuando compite con otros programas (+3,31 % frente a +0,75 %; "
+  "acaba con ganancia en el 73 % de las simulaciones frente al 50 %) y tiene menos caídas grandes en general. "
+  "Además, v1 tiene el mismo punto débil: también perdió un 97 % en una simulación parecida.",
+  bold_prefix="Decisión del equipo. ")
+p("Al elegir v2 nos apartamos de una regla que habíamos fijado antes del examen, y lo decimos abiertamente. "
+  "También contamos que la condición de la nota de práctica solo se cumplió por un empate exacto, porque antes "
+  "del examen cambiamos la regla de \"mejor que v1\" a \"igual o mejor que v1\". El riesgo de una caída muy "
+  "grande en un día extremo sigue existiendo.", bold_prefix="Transparencia. ")
+p("Hacer que el freno espere cuando el mercado está vacío, en lugar de vender a cualquier precio, y probarlo "
+  "con simulaciones nuevas.", bold_prefix="Siguiente paso. ")
 
-h("8. Lo que hace el programa entregado, paso a paso", 1)
+h("8. Lo que hace el programa entregado (v2), paso a paso", 1)
 bullets([
     "Una vez por minuto de mercado, mira 16 datos: cómo se ha movido el precio, lo agitado que está el "
     "mercado, la diferencia entre el precio de compra y el de venta, cuánto dinero tiene y cuántas acciones.",
-    "Siete redes neuronales dan una puntuación a cada una de las 9 acciones posibles, y se hace la media.",
+    "Los datos sobre el libro de órdenes (cuántas ofertas hay de cada lado) se sustituyen por valores normales "
+    "antes de pasárselos a las redes, porque en el simulador realista tienen valores que las redes nunca vieron.",
+    "Nueve redes neuronales dan una puntuación a cada una de las 9 acciones posibles, y se hace la media.",
     "La capa de seguridad tacha las acciones peligrosas: superar 400 acciones, arriesgar más del 30 % del "
-    "dinero, aumentar la apuesta si ya pierde más de un 5 % (en ese caso, además, reduce la posición) u "
-    "operar cuando el mercado está roto.",
+    "dinero, aumentar la apuesta si ya pierde más de un 5 % (en ese caso, además, reduce la posición), operar "
+    "cuando el mercado está roto o añadir una orden grande mientras otras siguen en espera.",
     "Ejecuta la acción con mejor puntuación de las que quedan. Esperar sin hacer nada siempre está permitido.",
 ], style="List Number")
 
@@ -249,6 +256,9 @@ bullets([
                                                    "pero no la hacen predecible."),
     ("No conocemos todos los detalles de la competición. ", "Por ejemplo, cada cuánto tiempo decidirá el "
                                                             "programa o cómo se medirá el mercado."),
+    ("Un día extremo puede salir muy mal. ", "Si el mercado se queda sin compradores justo cuando el freno "
+                                             "obliga a vender, la venta puede salir a un precio absurdo. Pasó "
+                                             "una vez en el examen final."),
 ])
 
 h("10. Lo que aprendimos", 1)
@@ -256,8 +266,8 @@ bullets([
     "Practicar en situaciones variadas importa más que usar el algoritmo más sofisticado.",
     "Varias opiniones promediadas (un comité) son más fiables que la mejor opinión individual.",
     "Hay que probar pronto en el entorno real: allí aparecieron problemas que la práctica escondía.",
-    "Fijar las reglas antes del examen nos protege de engañarnos a nosotros mismos, aunque a veces nos haga "
-    "rechazar un modelo que parece mejor.",
+    "Fijar las reglas antes del examen nos obliga a ver con claridad cuándo las medias y el peor caso apuntan "
+    "en direcciones distintas, y a decidir de forma consciente y documentada.",
 ])
 
 h("Glosario", 1)
@@ -311,7 +321,8 @@ table(["Término", "Qué significa"], [
     ["Venta en corto", "Vender acciones que no se tienen (prestadas) esperando que el precio baje para "
                        "recomprarlas más baratas. Así se puede ganar cuando el mercado cae."],
     ["Volatilidad", "Cuánto y con qué rapidez sube y baja el precio. Alta volatilidad: mercado agitado."],
-    ["v1 / v2", "Versión 1 (el modelo entregado) y versión 2 (el candidato de la segunda etapa)."],
+    ["v1 / v2", "Versión 1 (el primer modelo) y versión 2 (el modelo mejorado de la segunda etapa, que es el "
+                "entregado)."],
 ], widths=[1.8, 4.5])
 
 doc.save(out)

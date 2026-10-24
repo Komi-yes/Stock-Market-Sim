@@ -139,8 +139,9 @@ table(["Protección", "Efecto medido"], [
 p("También entrenamos modelos con mercados \"tipo ABIDES\". Solos no mejoraron, pero dos de ellos (los más "
   "estables) sumaron diversidad al ensamble final.")
 
-h("4. Por qué elegimos el modelo final", 1)
-p("Elegimos un ensamble de 7 DQN con la capa de seguridad. Las razones:")
+h("4. Por qué elegimos v1 en la primera etapa", 1)
+p("Al final de la primera etapa elegimos un ensamble de 7 DQN con la capa de seguridad (v1). La segunda etapa "
+  "(secciones 8 y 9) lo mejoró hasta v2, que es el modelo entregado. Las razones para elegir v1 fueron:")
 bullets([
     ("Ganó en las semillas holdout, ", "que nunca se usaron para elegir."),
 ], style="List Number")
@@ -168,20 +169,26 @@ p("el DQN inicial obtuvo de media más rentabilidad bruta en ABIDES. Pero eran a
   "rotos: mediana ≈ 0 %, drawdown de hasta 96 % y unas 135 órdenes inválidas por simulación. Con la rúbrica, "
   "eso es justo lo que se penaliza.", bold_prefix="Nota de honestidad: ")
 
-h("5. Qué hace el modelo, paso a paso", 1)
+h("5. Qué hace el modelo entregado (v2), paso a paso", 1)
 bullets([
     ("Recibe 16 variables. ", "Del mercado: rentabilidades a 1, 5 y 20 pasos, volatilidad, spread, "
                               "desequilibrio del libro, profundidad y precio frente a sus medias. De la cartera "
                               "propia: inventario, efectivo, rentabilidad del patrimonio, tiempo transcurrido y "
                               "órdenes abiertas."),
-    ("Siete redes neuronales (16→64→64→9) ", "estiman el valor (Q) de cada una de las 9 acciones, y se "
-                                            "promedian. Así se reduce el error de cualquier red individual."),
+    ("Neutraliza los datos del libro de órdenes. ", "A las redes les llega desequilibrio 0 y profundidad media "
+                                                    "de práctica, porque en ABIDES esos valores están fuera de lo "
+                                                    "que vieron al entrenar. La capa de seguridad sí ve los datos "
+                                                    "reales."),
+    ("Nueve redes neuronales (16→64→64→9) ", "estiman el valor (Q) de cada una de las 9 acciones, y se "
+                                            "promedian: las 7 de v1 más 2 nuevas elegidas en la segunda etapa."),
     ("La capa de seguridad anula las acciones que ", "superarían 400 acciones de inventario, llevarían la "
                                                      "exposición a más del 30 % del patrimonio, aumentarían la "
-                                                     "posición estando en −5 % (en ese caso obliga a reducirla) "
-                                                     "o abrirían posición con el libro roto."),
+                                                     "posición estando en −5 % (en ese caso obliga a reducirla), "
+                                                     "abrirían posición con el libro roto o añadirían una orden "
+                                                     "grande mientras hay otras en espera."),
     ("La acción final es la de mayor valor (argmax), ", "siempre válida."),
 ], style="List Number")
+doc.add_picture("student_work/figures/fig5_como_decide.png", width=Inches(6.3))
 p("En la práctica, el modelo opera de forma moderada a ambos lados del mercado: gana en caídas y no depende "
   "de que el mercado suba.")
 
@@ -193,6 +200,10 @@ bullets([
                                                                        "pero no la hacen predecible."),
     ("No conocemos el adaptador exacto del profesor: ", "cómo mide la profundidad, cada cuánto actúa el agente "
                                                         "y la escala de precios."),
+    ("El freno de pérdidas sigue siendo un punto débil: ", "con el libro vacío, la orden a mercado que obliga a "
+                                                          "cerrar la posición puede ejecutarse a un precio "
+                                                          "absurdo. Le pasó una vez a v2 (−126 %) y una vez a v1 "
+                                                          "(−97 %) en la prueba final."),
 ])
 
 h("7. Proceso", 1)
@@ -251,16 +262,23 @@ table(["Criterio", "v2", "v1", "¿Cumple?"], [
 ])
 doc.add_picture("student_work/figures/fig2_abides_prueba_final.png", width=Inches(6.3))
 doc.add_picture("student_work/figures/fig4_abides_competitivo.png", width=Inches(5.5))
-p("v2 no pasó la prueba: en una sola simulación (volátil + momentum) perdió un −126 %. Por eso el modelo "
-  "entregado sigue siendo v1 (TEAM_01.zip no cambia). Respetamos la regla aunque v2 sea mejor en casi todas las "
-  "medias, porque elegir después de ver el resultado sería hacer trampa con nuestra propia prueba.",
-  bold_prefix="Decisión: ")
+p("v2 no cumplió una de las condiciones: en una sola simulación (volátil + momentum) perdió un −126 %, más "
+  "que la peor caída de v1 (−98 %).", bold_prefix="Resultado de la prueba: ")
+p("aun así, el equipo decidió entregar v2. Es mejor que v1 en casi todo lo que puntúa la rúbrica: más "
+  "rentabilidad en ABIDES (+3,25 % frente a +0,60 %), más rentabilidad y más simulaciones con ganancia en el "
+  "mercado compartido (+3,31 % frente a +0,75 %; 73 % frente a 50 %), menos simulaciones con caídas de más del "
+  "20 % (3,6 % frente a 5,5 %) y menor caída en el mercado de práctica. TEAM_01.zip contiene ahora v2 y el "
+  "validador lo da por VÁLIDO; v1 queda guardado como copia de seguridad.", bold_prefix="Decisión del equipo: ")
+p("esta decisión se aparta de la regla que fijamos antes de la prueba, y lo dejamos registrado. La regla "
+  "protegía contra el riesgo de un episodio catastrófico, y ese riesgo sigue existiendo: el drawdown máximo es "
+  "un 20 % de la nota. Además, la condición de práctica solo se cumplió por empate exacto, después de cambiar "
+  "\"mejor que v1\" por \"igual o mejor que v1\" antes de la prueba.", bold_prefix="Transparencia: ")
 p("en esa simulación el libro de órdenes se vació (spread de 87 $). El freno de pérdidas obliga a cerrar la "
   "posición con una orden a mercado, y sin contrapartida esa orden se ejecuta a precios absurdos. v1 tiene el "
-  "mismo punto débil (−97 % con presión compradora). El siguiente paso sería que el freno espere (HOLD) mientras "
-  "el libro está roto, y probarlo con semillas nuevas.", bold_prefix="Por qué falló: ")
-p("una prueba previa y honesta puede rechazar un modelo que parece mejor. El drawdown máximo es un 20 % de la "
-  "nota y un solo episodio catastrófico pesa mucho, así que preferimos el modelo cuyo peor caso ya conocemos.",
+  "mismo punto débil (−97 % con presión compradora). La mejora pendiente es que el freno espere (HOLD) mientras "
+  "el libro está roto, y probarla con semillas nuevas.", bold_prefix="Por qué falló esa simulación: ")
+p("las medias y los peores casos pueden apuntar a modelos distintos. Fijar las reglas antes de la prueba nos "
+  "obligó a ver ese conflicto con claridad y a tomar la decisión de forma consciente y documentada.",
   bold_prefix="Lo que aprendimos: ")
 
 doc.save(out)
