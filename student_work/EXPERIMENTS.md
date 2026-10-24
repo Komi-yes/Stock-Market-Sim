@@ -311,6 +311,9 @@ Guards in SafePolicy:
 - **Final ensemble:** the 5 round-2 members plus 2 round-3 "mixed" members (top7).
 
 ## 6. Final model selection
+> **Stage 2 update (2026-10-23):** v1 below is still the submitted model. The stage-2 challenger (sel9_rm3_nb) failed the
+> pre-registered gate on ABIDES max drawdown (116% vs 98%), although it was better on most averages. See §7, "Final gate, stage 2".
+
 - **Chosen model:** `top7mix_400_x30_b5_sp50`, rebuilt by `python -m student_work.build_final` into `outputs/model.pt`.
   - A TorchScript `SafePolicy(Ensemble(7 DQN members))`, where each member is MLP 16-64-64-9. The members are:
     - exp_combo-C_s1 and C_s4 (medium reward, training mask 300)
@@ -610,3 +613,89 @@ After the round-5 diagnosis, the plan's `agg_guard` worker was replaced by `guar
   1.92 → 1.57 for sel9_rm3. sel9_rm3 still has the best practice SCORE, through lower DD and a better worst scenario.
 - **Two challengers go to validation:** sel9_rm3, and sel9_rm3_nb (sel9_rm3 with `--neutral-book`).
   The validation set is practice validation plus ABIDES G11 seeds 56–60, alongside v1.
+
+### Round 7: validation (practice validation seeds 20000–20009; ABIDES G11 seeds 56–60, 55 runs per model)
+| model | practice SCORE* | practice R% | practice DD% | practice worst | ABIDES SCORE | ABIDES R% | ABIDES max DD | ABIDES worst template | max inv |
+|---|---|---|---|---|---|---|---|---|---|
+| v1 | **0.720** | **1.96** | 1.33 | −0.97 | 0.450 | −0.38 | 52.8 | −6.22 | 184 |
+| **sel9_rm3_nb** | 0.560 | 1.49 | **0.97** | **−0.11** | **0.840** | **+1.31** | **11.7** | **−0.13** | 110 |
+| v1_nb | 0.580 | 1.75 | 1.48 | −0.88 | (not run) | | | | |
+| sel9_nb | (0.450) | 1.67 | 1.30 | −0.90 | 0.700 | +1.26 | 20.7 | −1.81 | 239 |
+| sel9_rm3 | (0.417) | 1.48 | 0.94 | −0.60 | 0.170 | −1.32 | **113.9** | −11.48 | 392 |
+| sel9 | (0.717) | 2.05 | 1.30 | −0.52 | 0.140 | −0.97 | **140.4** | −22.70 | 308 |
+
+\*The practice SCOREs come from the gate's pool composition (v1, the challengers, rule, HOLD, starter-s7). Numbers in brackets come from the earlier, larger validation pool.
+
+- **Book neutralisation is what generalises in ABIDES.**
+  - Without it, the S6 tuning winner sel9_rm3 blows up on new seeds (trending_day max DD 114%), and so does sel9 (volatile+momentum 140%).
+  - With it, sel9_rm3_nb has the best ABIDES result of any model so far: R +1.31%, max DD 11.7%, worst template −0.13%, no skipped orders.
+- **Practice cost.** The resting-order guard (crash and downtrend) and the book neutralisation each give up practice return, so no candidate beats v1 on practice validation SCORE.
+- **Choice of gate candidate, made before any holdout2 result:** sel9_rm3_nb only, because it has the best ABIDES validation, against v1.
+  - v1_nb was not added, because it is also below v1 on practice.
+  - Only one challenger enters because the overlay runs take 10–50 minutes each.
+  - **Expected outcome, written down in advance:** from the validation preview, sel9_rm3_nb will probably **fail gate criterion 1** (practice SCORE ≥ v1).
+    If it does, the pre-registered rule keeps v1. The gate is not changed after the fact.
+
+### Final gate, stage 2 (holdout2; each set run once)
+**Criterion 1: practice holdout2** (seeds 40000–40019, 280 episodes; JSON in `outputs/eval_gate_holdout2/`):
+
+| model | SCORE | rR | rD | rC | R% | DD% | worst% | profitable | crash | downtrend | trending |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| rule-momentum | 0.7125 | 1.00 | 0.25 | 0.50 | 3.11 | 1.91 | −1.20 | 0.59 | 7.57 | 6.97 | 9.11 |
+| **sel9_rm3_nb** | **0.6375** | 0.50 | 0.75 | 0.875 | 1.32 | 0.98 | −0.64 | 0.71 | 4.65 | 4.22 | 0.33 |
+| **v1** | **0.6375** | 0.75 | 0.50 | 0.50 | 1.90 | 1.27 | −1.25 | 0.68 | 6.73 | 5.75 | 0.55 |
+| HOLD | 0.3625 | | | | 0 | 0 | 0 | 0 | | | |
+| starter-s7 | 0.1500 | | | | 0.31 | 4.31 | −7.75 | 0.43 | | | |
+
+**The result is an exact tie (0.6375 = 0.6375).**
+- sel9_rm3_nb wins the drawdown and robustness ranks, and v1 wins the return rank (+0.58 pp more R).
+- Criterion 1 passes **only** because of the "≥" amendment, which was made before any holdout2 run, after the round-5 diagnosis.
+  Under the original wording (">") it would fail.
+- The amendment's stated premise (that guard changes are practice-neutral) turned out to be wrong; see EXP-010.
+- Recorded here so the decision can be judged with this in view.
+
+**Criterion 2: ABIDES G11 individual, seeds 61–70** (110 runs per model; `outputs/abides_eval/gate_g11_ind.json`):
+
+| model | ABIDES SCORE | R% | median R% | trimmed mean R%* | mean DD% | **max DD%** | worst template | profitable | runs with DD > 20% | skips/run |
+|---|---|---|---|---|---|---|---|---|---|---|
+| sel9_rm3_nb | 0.600 | **+3.25** | −0.02 | +1.46 | 4.91 | **116.4** | −5.19 (vol+momentum) | 0.44 | 3.6% | 0.2 |
+| v1 | 0.500 | +0.60 | −0.02 | +0.56 | 4.11 | 98.2 | −9.93 (exec BID) | 0.47 | 5.5% | 0.3 |
+| HOLD | 0.400 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+\*Trimmed mean drops the best and worst 5% of runs.
+
+| check | value | limit | result |
+|---|---|---|---|
+| mean R ≥ v1 | 3.25 ≥ 0.60 | | ✅ |
+| mean DD ≤ 1.25 × v1 | 4.91 | 5.14 | ✅ |
+| **max DD ≤ max(15%, v1)** | **116.4** | **98.2** | **❌** |
+| skips (rounded) = 0 | 0.2 → 0 | | ✅ |
+
+**Gate result: sel9_rm3_nb FAILS** (criterion 2, max DD). **v1 stays as TEAM_01**, per the pre-registered rule.
+The release step was not taken: `outputs/model.pt` and `submission/TEAM_01.zip` are unchanged.
+
+**Failure mode.** The −126% run is volatile_day+with_momentum, seed 65. The mid ended flat (99,980 → 99,974), but the spread reached 8,667 cents, so the book was broken.
+Under the −5% brake, SafePolicy forces a **market** order toward flat, and in an empty book that order fills at absurd prices.
+v1's worst run (−97%, exec BID, seed 61, spread up to 94,597 cents) has the same cause. This is round 5's "fire sale" failure.
+- W9's `broken_brake=1` (HOLD instead of a forced market order while the book is broken) targets exactly this. On the 5 tuning seeds it looked insignificant, because those seeds held no such event.
+- **Next step, not done:** v2 + `broken_brake=1`, tested on **fresh** ABIDES seeds (71+). Holdout2 is spent and is not reused.
+
+**Criterion 3: ABIDES competitive.** v1, sel9_rm3_nb, rule, starter-s7 and starter-s8 trade in one exchange, on 6 templates × seeds 61–65 (`gate_comp.json`):
+
+| agent | R% | median R% | mean DD% | max DD% | profitable | skips/run | max inv |
+|---|---|---|---|---|---|---|---|
+| starter-s8 | +17.81 | +0.15 | 23.9 | 88.1 | 0.57 | 112 | 500 |
+| starter-s7 | +8.25 | −0.15 | 10.2 | 92.9 | 0.30 | 119 | 490 |
+| rule | +5.53 | −0.37 | 13.9 | 79.4 | 0.23 | 2.8 | 407 |
+| **sel9_rm3_nb** | **+3.31** | **+0.19** | **3.2** | **15.3** | **0.73** | **0.0** | 83 |
+| v1 | +0.75 | 0.00 | 3.9 | 15.5 | 0.50 | 0.4 | 132 |
+
+The challenger's R is at least v1's (3.31 ≥ 0.75), and its max DD of 15.3 is within max(20%, 15.5). ✅
+- The starters' and the rule's means come from a few trending_day runs (starter-s8 +94%), at drawdowns of 79–93% and with 112–119 skipped orders per run.
+
+**Criterion 4: compatibility.** The contract check passes. Under torch 2.2.2 + numpy 1.26 the outputs are bit-identical (max diff 0, every argmax the same, 1401 observations). ✅
+
+**Overall: criteria 1 (an exact tie, passing under "≥"), 3 and 4 pass; criterion 2 fails on max DD. The challenger is rejected and v1 stays as TEAM_01.**
+v2 is better on almost every average: practice DD and worst scenario, ABIDES mean and trimmed R, competitive R and profitable share.
+It still has one catastrophic run (−126%) from the forced-market-order brake in a broken book. v1 has the same weakness (−97%).
+The fix to test next is v2 + `broken_brake=1` on fresh ABIDES seeds 71+.

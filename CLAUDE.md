@@ -45,9 +45,12 @@ Our own tools are in `student_work/`, owned by the orchestrator; workers import 
 - `evaluate`: the fixed protocol and rubric-like SCORE. Example: `-m student_work.evaluate --set tuning --model n=path [--model ...]`.
   The seed sets are tuning, validation and holdout.
 - `envs`: extra stress scenarios and `RandomRegimeEnv(family=practice|abides|mixed)`.
-- `abides_eval`: runs our TorchScript policy inside ABIDES-NG, alone or `--competitive`. ABIDES seeds 21–45 have been used for checks.
+- `abides_eval`: runs our TorchScript policy inside ABIDES-NG, alone or `--competitive`. See below for which seeds are spent.
 - `compose`: builds a seed ensemble and wraps it in `SafePolicy` guards.
 - `build_final`: rebuilds the selected final model into `outputs\model.pt`.
+- `abides_report` (ABIDES SCORE tables; `--add-hold`), `select_ensemble` (greedy member selection), `make_figures`
+  (presentation PNGs), and `make_docx.py` (Spanish explanation; run it with `outputsenv_torch22`).
+  `abides_eval` has the `G11`/`S6` grids, `a+b` overlays and `--resume`. ABIDES seeds 1–70 and practice `holdout`/`holdout2` are spent; use seeds 71+ for any new check.
 
 ## Workflow (in order)
 

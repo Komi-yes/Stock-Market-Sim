@@ -7,7 +7,7 @@ import sys
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Pt, RGBColor
+from docx.shared import Inches, Pt, RGBColor
 
 out = sys.argv[1]
 doc = Document()
@@ -199,6 +199,69 @@ h("7. Proceso", 1)
 p("Usamos varios agentes de IA en paralelo, cada uno con un experimento. Un orquestador comparaba todos los "
   "resultados con el mismo protocolo y decidía la siguiente ronda. Todo, incluidos los experimentos fallidos, "
   "está registrado en student_work/EXPERIMENTS.md.")
+
+h("8. Segunda etapa: rondas 5 a 7", 1)
+p("Con más tiempo antes de la presentación repetimos el proceso partiendo del modelo v1. Antes de mirar ningún "
+  "resultado nuevo fijamos semillas nuevas (tuning, validación y una prueba final holdout2 que solo se usa una vez) "
+  "y las reglas para sustituir a v1.")
+
+h("Ronda 5: diagnóstico en ABIDES con más escenarios", 2)
+p("Probamos v1 en 11 escenarios de ABIDES en vez de 4, incluidos un día con tendencia, mercados líquidos y poco "
+  "profundos, y un agente que compra o vende 1,2 millones de acciones (presión compradora o vendedora). "
+  "Resultado: v1 quedaba por debajo de no hacer nada (rentabilidad media −0,31 %). Las pérdidas venían de la "
+  "ejecución, no de la predicción:")
+bullets([
+    ("Órdenes en espera: ", "varias órdenes límite grandes se ejecutaban a la vez y la posición llegaba a 120–170 "
+                            "acciones (más del 100 % del patrimonio), aunque la capa de seguridad apuntaba al 30 %."),
+    ("Ventas forzadas en un libro vacío: ", "con presión vendedora, el freno de pérdidas vendía a mercado sin "
+                                           "compradores y perdía un −31 % aunque el precio acababa igual."),
+    ("Rasgos fuera de rango: ", "en ABIDES el desequilibrio del libro llega a ±0,6–0,85, cuando en práctica es ±0,15, "
+                                "así que las redes extrapolaban."),
+])
+
+h("Ronda 6: cuatro agentes en paralelo", 2)
+table(["Idea", "Resultado"], [
+    ["Redes que siguen tendencias en ambos sentidos", "Solas sí siguen la tendencia, pero dentro del ensamble "
+                                                      "las demás redes las anulan. Descartada."],
+    ["30 redes nuevas con las recetas que ya funcionaban", "14 de 30 pasan el filtro; dos de ellas se añaden al "
+                                                           "ensamble (9 redes)."],
+    ["Guardia de órdenes en espera", "Arregla los dos casos de pérdida grande en ABIDES; cuesta algo de "
+                                     "rentabilidad en el mercado de práctica."],
+    ["Neutralizar los rasgos del libro de órdenes", "Igual en práctica y mucho mejor en ABIDES."],
+])
+
+h("Ronda 7: combinación y validación", 2)
+p("Ninguna pieza sola es suficiente. En la validación de ABIDES (55 simulaciones con semillas nuevas), solo la "
+  "combinación de las dos mejoras es a la vez rentable y segura:")
+doc.add_picture("student_work/figures/fig3_abides_ablacion.png", width=Inches(6.3))
+p("El candidato v2 es: 9 redes (las 7 de v1 más 2 nuevas) + guardia de órdenes en espera (bloquea las órdenes "
+  "grandes que aumentan la posición mientras hay órdenes sin ejecutar) + rasgos del libro neutralizados. "
+  "Las protecciones de v1 se mantienen.")
+
+h("9. Prueba final y decisión", 1)
+p("Las reglas para sustituir a v1 se escribieron antes de ver ningún resultado de la prueba final. v2 tenía que "
+  "cumplir las cuatro:")
+table(["Criterio", "v2", "v1", "¿Cumple?"], [
+    ["1. Práctica (holdout2): puntuación ≥ v1", "0,6375", "0,6375", "Sí (empate exacto)"],
+    ["2a. ABIDES, 110 simulaciones: rentabilidad media ≥ v1", "+3,25 %", "+0,60 %", "Sí"],
+    ["2b. ABIDES: drawdown medio ≤ 1,25 × v1", "4,9 %", "4,1 %", "Sí"],
+    ["2c. ABIDES: drawdown máximo ≤ el de v1", "116 %", "98 %", "No"],
+    ["3. ABIDES competitivo: rentabilidad ≥ v1 y drawdown máx. ≤ 20 %", "+3,31 % / 15 %", "+0,75 % / 16 %", "Sí"],
+    ["4. Compatible con PyTorch 2.2", "idéntico", "idéntico", "Sí"],
+])
+doc.add_picture("student_work/figures/fig2_abides_prueba_final.png", width=Inches(6.3))
+doc.add_picture("student_work/figures/fig4_abides_competitivo.png", width=Inches(5.5))
+p("v2 no pasó la prueba: en una sola simulación (volátil + momentum) perdió un −126 %. Por eso el modelo "
+  "entregado sigue siendo v1 (TEAM_01.zip no cambia). Respetamos la regla aunque v2 sea mejor en casi todas las "
+  "medias, porque elegir después de ver el resultado sería hacer trampa con nuestra propia prueba.",
+  bold_prefix="Decisión: ")
+p("en esa simulación el libro de órdenes se vació (spread de 87 $). El freno de pérdidas obliga a cerrar la "
+  "posición con una orden a mercado, y sin contrapartida esa orden se ejecuta a precios absurdos. v1 tiene el "
+  "mismo punto débil (−97 % con presión compradora). El siguiente paso sería que el freno espere (HOLD) mientras "
+  "el libro está roto, y probarlo con semillas nuevas.", bold_prefix="Por qué falló: ")
+p("una prueba previa y honesta puede rechazar un modelo que parece mejor. El drawdown máximo es un 20 % de la "
+  "nota y un solo episodio catastrófico pesa mucho, así que preferimos el modelo cuyo peor caso ya conocemos.",
+  bold_prefix="Lo que aprendimos: ")
 
 doc.save(out)
 print("saved", out)
