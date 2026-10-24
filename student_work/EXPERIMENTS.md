@@ -468,3 +468,145 @@ The same two runs (volatile_day s51, stress_test s51) dominate every setting. No
 **Amendment to gate criterion 1** (made before any holdout2 run): "higher than v1's" becomes **"≥ v1's"**.
 A guard-only fix (resting orders, broken book) changes nothing in the practice market, where open_orders = 0 and the spread is ≤ 40 bps. Its practice SCORE is then
 identical to v1's by construction, and a strict ">" would reject it on a tie.
+
+### Round 6 (2026-10-23): four Sonnet workers
+After the round-5 diagnosis, the plan's `agg_guard` worker was replaced by `guard2`, which works on the resting-order and broken-book guards.
+- **Evaluation:** practice **tuning** set, plus ABIDES S6 on seeds 51–55 for guard2 and feature_shift.
+- **CPU caps:** guard2 7, seed_farm 6, trend 3, feature_shift 3.
+
+### EXP-008: trend (W6, Sonnet). Direction-symmetric trend members. **Dropped**
+- **Change:** its own regime sampler with p(trend) = 0.7, split evenly up and down, drift U(0.0002, 0.0008). The "trend" reward is
+  (dd 2.0, inv_quad 0.2, trade 0.05, breach 1.0). It is trained with `combo.train`, swapping the env class only. 6 seeds × 60k steps.
+  Code: `student_work/experiments/trend.py`.
+- **Results (tuning):** on their own, 5 of 6 members ride uptrends (+7 to +13% in trending; the rule makes +9.7%), but most lose crash and downtrend.
+  - Best single member, raw s6: R 2.85%, but O = 19.
+  - **v1 + 2 trend members:** SCORE 0.500 vs v1 0.600. R 1.77 vs 1.92. Trending barely moves (0.48 → 0.51). Downtrend drops and the worst scenario falls to −1.61.
+  - **v1 + 4 trend members:** SCORE 0.475, R 1.66.
+- **Failure mode:** averaging mean Q lets v1's flat or short-leaning members outvote the trend members, so their edge disappears.
+  Exploiting them would need a regime-gated mixture. The members are also seed-fragile: s1 holds 75% of the time, and only s6 rides downtrends.
+
+### EXP-009: seed_farm (W7, Sonnet). More members from the proven recipes
+- **Change:** recipes B (heavy), C (medium + mask 300) and M (mixed, heavy), each on seeds 6–15, giving 30 members.
+  The filter was fixed in advance: tuning SCORE > HOLD in the pooled table, worst scenario ≥ −2%, hold share < 0.9.
+  Code: `student_work/experiments/seed_farm.py`.
+- **Pass rates:** B 5/10, C 5/10, M 4/10. The passers are C s9, s14, s8, s7, s12; M s14, s13, s8, s12; B s14, s12, s6, s15, s9.
+  - Best single member: C s9, SCORE 0.856 (R 2.23%, worst −0.20%).
+  - No NaN/Inf in any run.
+- **Ensembles (tuning, v1 guard):**
+  - farm_only (the 14 passers): SCORE 0.61 vs v1 0.55. R 1.41 vs 1.92. DD 0.65. Worst +0.09.
+  - farm_top (v1's 7 + the top 7 passers): SCORE 0.53, R 1.89, DD 1.04.
+  - farm_v1plus (v1's 7 + all 14): SCORE 0.41.
+- **Limitation:** selecting and scoring on the same tuning set is optimistic. Only 14 of 30 seeds pass, so variance between seeds is still large.
+
+### Round 7 (orchestrator): greedy ensemble selection and validation
+- **Tool:** `student_work/select_ensemble.py`. Starting from v1's 7 members, each step adds the candidate that gives the best tuning SCORE
+  in a pool of current, all trials, HOLD and rule. The candidates were the 14 farm passers and trend s6, s5 and s2.
+  - It took 5 steps and added C_s12, C_s7, M_s13 and B_s15, then stopped because B_s14 lowered the SCORE.
+  - Tuning R by step: 1.92 → 2.07 → 2.12 → 2.13 → 2.06 (DD 1.10, worst −0.06). No trend member was ever picked.
+- **Practice validation** (seeds 20000–20009, 140 episodes, one pool; JSON in `outputs/eval_r7_val/`):
+
+  | candidate | members | SCORE | R% | DD% | worst% | profitable | crash | downtrend | trending |
+  |---|---|---|---|---|---|---|---|---|---|
+  | **farm_top** | v1's 7 + C s9, s14, s8, M s14, B s14, B s12, M s13 | **0.667** | **2.07** | **1.03** | −0.52 | 0.71 | 7.82 | 5.89 | 0.63 |
+  | rule-momentum | | 0.567 | 2.73 | 1.92 | −1.36 | 0.60 | 5.00 | 6.82 | 9.45 |
+  | sel9 | v1's 7 + C s12, C s7 (greedy step 2) | 0.558 | 2.05 | 1.30 | −0.52 | 0.74 | 6.77 | 5.83 | 0.48 |
+  | farm_only | 14 farm passers | 0.475 | 1.34 | 0.73 | −0.28 | 0.74 | 1.47 | 1.40 | 6.09 |
+  | sel11 | greedy final (11) | 0.442 | 1.78 | 1.19 | −0.38 | 0.74 | 7.99 | 3.36 | 0.51 |
+  | v1 | | 0.442 | 1.96 | 1.33 | −0.97 | 0.74 | 6.76 | 6.21 | 0.55 |
+  | HOLD | | 0.350 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+  - The greedy endpoint overfit tuning: sel11 drops back on validation.
+  - farm_top, picked by a simple tuning rule (top half of the passers), generalises best and beats v1 on R, DD and worst scenario.
+  - farm_only's lower DD comes from passivity in crash and downtrend.
+
+### EXP-010: guard2 (W9, Sonnet). Resting-order and broken-book guards
+- **Change:** `student_work/experiments/guard2.py` holds `SafePolicy2`, which wraps v1's 7 members. With every new option off its outputs
+  are bit-identical to v1 (max diff 0 on 2001 observations).
+  - `resting_mode` 1: while x[12] > 0, block exposure-growing limit actions.
+  - `resting_mode` 2: while x[12] > 0, block every exposure-growing action.
+  - `broken_brake` 1: when the book is broken, put HOLD on top instead of forcing a market order.
+  - `broken_brake` 2: when the book is broken, force the shrinking limit order instead.
+  - Cash bounds 0.65 / 1.35 as a looser variant.
+- **ABIDES S6, seeds 51–55** (30 runs per model; v1's rows taken from round 5):
+
+  | variant | ABIDES SCORE | R% | mean DD% | max DD% | worst template | max inv | volatile s51 | exec ASK s52 |
+  |---|---|---|---|---|---|---|---|---|
+  | v1 | 0.057 | −0.78 | 5.94 | 37.8 | −7.13 | 170 | −19.2 | −31.3 |
+  | **a2** (resting, all) | **0.886** | **+1.71** | 4.14 | 33.7 | −0.09 | 117 | −3.3 | +22.9 |
+  | a2 + b1 + cash 0.65 / 1.35 | 0.786 | +1.62 | 2.53 | 21.7 | −1.23 | 204 | −4.4 | +8.4 |
+  | a2 + b1 | 0.714 | +1.46 | 4.17 | 33.7 | −0.09 | 117 | −3.3 | +16.4 |
+  | a1 (resting, limit only) | 0.529 | +0.46 | 4.57 | 27.6 | −4.66 | 130 | −3.5 | +5.4 |
+  | b2 | 0.271 | −0.06 | 5.18 | 33.4 | −4.72 | 170 | −12.3 | −18.5 |
+  | b1 | 0.143 | −0.45 | 5.61 | 40.4 | −7.58 | 170 | −8.1 | −30.1 |
+- **Practice tuning:**
+
+  | variant | R% |
+  |---|---|
+  | v1 | 1.92 |
+  | a2 | 1.25 |
+  | a2 + b1 + cash 0.65 / 1.35 | 1.43 |
+
+  The **amendment's premise was wrong**: the stress scenarios in `envs.py` simulate a non-zero `open_orders`, so a2 changes practice behaviour.
+  The loss falls on crash (6.4 → 4.3), downtrend (6.0 → 3.9) and low_liquidity. The amendment to criterion 1 ("≥") stays, but it does not make guard changes practice-neutral.
+- **Conclusion:** resting-order awareness is the fix for ABIDES. The broken-book brake variants do little.
+  The cost is practice return, so round 7 adds `resting_mode` 3, which blocks only exposure-growing LARGE actions while orders rest.
+
+### Round 7 (continued)
+- **farm_top and sel9 with v1's guard on ABIDES S6, seeds 51–55:**
+
+  | model | R% | max DD% | max inv | skips/run |
+  |---|---|---|---|---|
+  | farm_top | −1.42 | **192** | 370 | 3.1 |
+  | sel9 | +1.16 | 17.5 | 218 | 0.2 |
+  | v1 | −0.78 | 37.8 | 170 | 0.5 |
+
+  farm_top wins on practice validation but is unsafe in ABIDES without a resting-order guard.
+- **Merged into `student_work/model.py`:** `SafePolicy(resting_mode=0|1|2|3)`, with the matching `compose.py --resting-mode` flag.
+  - Mode 0 reproduces v1: the `build_final` rebuild has identical outputs (max diff 0, every argmax the same; the file bytes differ only because the scripted code changed).
+  - Mode 2 is identical to W9's a2.
+- **Grid screened:** {v1, sel9, farm_top (14 members)} × resting mode {2, 3}, on practice tuning and ABIDES S6 seeds 51–55.
+
+### EXP-011: feature_shift (W8, Sonnet). Clamp or neutralise out-of-range ABIDES features
+- **Change:** `student_work/experiments/feature_shift.py` adds `ClampedBase`, which changes the observation before the Q-ensemble while the guard reads the raw x.
+  The ranges are p1–p99 of 157k practice observations from v1 rollouts (seeds 100–139, plus RandomRegimeEnv 1000–1299), stored in `outputs/exp_fshift/ranges.json`.
+  - a: clamp x0–x7, x13 and x14.
+  - b: clamp x5–x7.
+  - c: neutralise the book (x5 = 0, x6 = x7 = practice mean 0.608).
+  - d: c plus clamping the return features.
+- **ABIDES S6, seeds 51–55:**
+
+  | variant | ABIDES SCORE | R% | mean DD% | max DD% | worst template |
+  |---|---|---|---|---|---|
+  | **c** | 0.825 | **+4.15** | 3.79 | 27.3 | −0.20 |
+  | b | 0.575 | +0.21 | 5.12 | 30.2 | −1.50 |
+  | a | 0.450 | +2.81 | 6.46 | 40.4 | −1.92 |
+  | v1 | 0.125 | −0.78 | 5.94 | 37.8 | −7.13 |
+
+- **Practice tuning:**
+
+  | variant | R% | worst scenario |
+  |---|---|---|
+  | b | 1.93 | identical to v1 |
+  | c | 2.02 | −1.42 (choppy) |
+  | v1 | 1.92 | |
+  | a | 1.77 | |
+  | d | 1.75 | does not beat HOLD |
+- **Conclusion:** neutralising the book features is roughly practice-neutral and helps in ABIDES, which supports the extrapolation hypothesis.
+  The median R is still about 0, so the mean gain is noisy, and stress_test max DD rises to 27%. The churn (BUY_MARKET_SMALL ≈ 23%) remains.
+- **Merged:** `model.BookNeutral` (x5 = 0, x6 = x7 = 0.6077) and `compose.py --neutral-book`. Its argmax agrees 100% with W8's variant c.
+
+### Round 7: combination grid (practice tuning; ABIDES S6, seeds 51–55)
+| model | members | resting mode | practice SCORE | practice R% | practice DD% | practice worst | ABIDES SCORE | ABIDES R% | ABIDES median | ABIDES max DD | max inv | ABIDES profitable |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **sel9_rm3** | v1's 7 + C s12, C s7 | 3 (LARGE) | **0.700** | 1.57 | 0.96 | −0.44 | **0.750** | **+3.27** | +0.05 | **9.8** | 90 | 0.57 |
+| v1 | v1's 7 | 0 | 0.600 | 1.92 | 1.26 | −0.64 | 0.044 | −0.78 | −0.18 | 37.8 | 170 | 0.30 |
+| top14_rm3 | farm_top | 3 | 0.575 | 1.27 | 0.83 | −0.44 | 0.533 | +3.36 | −0.03 | 41.5 | 153 | 0.47 |
+| top14_rm2 | farm_top | 2 | 0.550 | 1.27 | 0.78 | −0.46 | 0.550 | +1.90 | −0.01 | 11.7 | 81 | 0.50 |
+| v1_rm3 | v1's 7 | 3 | 0.513 | 1.39 | 0.96 | −0.52 | 0.633 | +2.44 | −0.02 | 26.7 | 159 | 0.47 |
+| sel9_rm2 | sel9 | 2 | 0.350 | 1.10 | 0.92 | −0.69 | 0.600 | +1.76 | −0.01 | 5.4 | 110 | 0.50 |
+
+- The ABIDES SCOREs are from one pool that also holds the W8 and W9 models, so they compare only within this table.
+- **sel9_rm3 is best on both sides.** Every resting-order variant costs practice R, because the practice stress scenarios report open orders:
+  1.92 → 1.57 for sel9_rm3. sel9_rm3 still has the best practice SCORE, through lower DD and a better worst scenario.
+- **Two challengers go to validation:** sel9_rm3, and sel9_rm3_nb (sel9_rm3 with `--neutral-book`).
+  The validation set is practice validation plus ABIDES G11 seeds 56–60, alongside v1.

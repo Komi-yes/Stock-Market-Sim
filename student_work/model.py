@@ -35,6 +35,22 @@ class Ensemble(nn.Module):
         return torch.stack(outs, dim=0).mean(dim=0)
 
 
+class BookNeutral(nn.Module):
+    """Feeds the base policy the practice-market means of the order-book features (stage 2, EXP-011).
+
+    x[5] book imbalance becomes 0 and x[6], x[7] (bid and ask depth) become 0.6077. ABIDES books show imbalance of
+    about +/-0.6-0.85 against +/-0.15 in practice, so the members extrapolate there. Wrap the Q-ensemble with this
+    and put SafePolicy outside it, so the guards still read the raw observation.
+    """
+    def __init__(self, base: nn.Module):
+        super().__init__()
+        self.base = base
+        self.register_buffer("book", torch.tensor([[0.0, 0.6077, 0.6077]]))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.base(torch.cat([x[:, :5], self.book.expand(x.shape[0], 3), x[:, 8:]], dim=1))
+
+
 class SafePolicy(nn.Module):
     """Wraps any policy and demotes actions that would break market constraints.
 
@@ -53,11 +69,18 @@ class SafePolicy(nn.Module):
     Broken-book guard (`max_spread_obs`, e.g. 0.5 = 100 bps): while the spread feature x[:, 4] is above it,
     exposure-growing actions are demoted. ABIDES stress_test books can empty out, with mid going to cents,
     and any position then gets marked at a meaningless price.
+
+    Resting-order guard (`resting_mode`, stage 2): while x[:, 12] (open orders / 10) is above 0, the checks above
+    cannot see what the resting limit orders will add when they fill. In ABIDES several resting LARGE orders filled
+    together and took |inventory| past 100% of NAV. Mode 1 demotes exposure-growing limit actions, mode 2 every
+    exposure-growing action, and mode 3 exposure-growing LARGE actions only. Mode 0 (default) is the v1 behaviour.
     """
     def __init__(self, base: nn.Module, max_inventory: float = 500.0, min_cash_ratio: float = 0.1,
-                 max_cash_ratio: float = 1e9, brake_nav: float = -1e9, max_spread_obs: float = 2.0):
+                 max_cash_ratio: float = 1e9, brake_nav: float = -1e9, max_spread_obs: float = 2.0,
+                 resting_mode: int = 0):
         super().__init__()
         self.base = base
+        self.resting_mode = int(resting_mode)
         self.max_inventory = float(max_inventory)
         self.min_cash_ratio = float(min_cash_ratio)
         self.max_cash_ratio = float(max_cash_ratio)
@@ -78,6 +101,13 @@ class SafePolicy(nn.Module):
         braking = (x[:, 10:11] * 0.2) < self.brake_nav
         broken = x[:, 4:5] > self.max_spread_obs
         bad = bad | ((braking | broken) & (new_inv.abs() > inv.abs()))
+        if self.resting_mode > 0:
+            grows_resting = (x[:, 12:13] > 0.0) & (new_inv.abs() > inv.abs())
+            if self.resting_mode == 1:
+                grows_resting = grows_resting & (self.action_index > 4.5)        # limit actions 5..8
+            elif self.resting_mode == 3:
+                grows_resting = grows_resting & (self.signed_qty.abs() > 25.0)   # LARGE actions
+            bad = bad | grows_resting
         floor = q.min(dim=1, keepdim=True).values - 1.0
         out = torch.where(bad, floor, q)
         # Forced de-risking: market sell (long) or buy (short), large if |inv| >= 50.
