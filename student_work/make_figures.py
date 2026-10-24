@@ -166,6 +166,33 @@ def fig4():
     _save(fig, "fig4_abides_competitivo.png")
 
 
+def fig5():
+    """Plain-language flow diagram: how the submitted model (v1) turns market data into one action."""
+    from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+    fig, ax = plt.subplots(figsize=(12.5, 3.9))
+    ax.set_xlim(0, 12)
+    ax.set_ylim(0, 3.6)
+    ax.axis("off")
+    boxes = [
+        (0.1, "1. Mira el mercado", "16 datos:\nprecios recientes,\nvolatilidad, diferencia\ncompra-venta, su dinero\ny sus acciones", INK2),
+        (3.1, "2. Siete redes opinan", "cada red puntúa\nlas 9 acciones posibles;\nse promedian las\npuntuaciones\n(como un comité)", COLOR["v1"]),
+        (6.1, "3. Capa de seguridad", "veta lo arriesgado:\nexposición > 30 %,\npérdidas > 5 %,\nmercado sin\ncompradores", COLOR["v2"]),
+        (9.1, "4. Decide", "elige la acción con\nmejor puntuación:\nesperar, comprar\no vender\n(10 o 50 acciones)", COLOR["rule"]),
+    ]
+    for x, title, body, color in boxes:
+        ax.add_patch(FancyBboxPatch((x, 0.2), 2.75, 2.9, boxstyle="round,pad=0.02,rounding_size=0.12",
+                                    facecolor=SURFACE, edgecolor=color, linewidth=2.2))
+        ax.add_patch(FancyBboxPatch((x, 2.6), 2.75, 0.5, boxstyle="round,pad=0.02,rounding_size=0.12",
+                                    facecolor=color, edgecolor=color, linewidth=2.2))
+        ax.text(x + 1.375, 2.85, title, ha="center", va="center", color="white", fontsize=11, fontweight="bold")
+        ax.text(x + 1.375, 1.4, body, ha="center", va="center", color=INK, fontsize=9.5, linespacing=1.45)
+    for x in (2.87, 5.87, 8.87):
+        ax.add_patch(FancyArrowPatch((x, 1.4), (x + 0.21, 1.4), arrowstyle="-|>", mutation_scale=16,
+                                     color=INK2, linewidth=2))
+    ax.set_title("Cómo decide el modelo entregado (v1), una vez por minuto de mercado", loc="left")
+    _save(fig, "fig5_como_decide.png")
+
+
 if __name__ == "__main__":
-    for fn in (fig1, fig2, fig3, fig4):
+    for fn in (fig1, fig2, fig3, fig4, fig5):
         fn()
