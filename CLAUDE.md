@@ -49,7 +49,7 @@ Our own tools are in `student_work/`, owned by the orchestrator; workers import 
 - `compose`: builds a seed ensemble and wraps it in `SafePolicy` guards.
 - `build_final`: rebuilds the selected final model into `outputs\model.pt`.
 - `abides_report` (ABIDES SCORE tables; `--add-hold`), `select_ensemble` (greedy member selection), `make_figures`
-  (presentation PNGs), and `make_docx.py` (Spanish explanation; run it with `outputsenv_torch22`).
+  (presentation PNGs), and `make_docx.py` (Spanish explanation; run it with `outputs\venv_torch22`).
   `abides_eval` has the `G11`/`S6` grids, `a+b` overlays and `--resume`. ABIDES seeds 1–70 and practice `holdout`/`holdout2` are spent; use seeds 71+ for any new check.
 
 ## Workflow (in order)
